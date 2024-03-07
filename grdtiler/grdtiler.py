@@ -4,6 +4,7 @@ import os
 from tqdm import tqdm
 import xbatcher
 from datetime import datetime
+import logging
 from xsarslc.tools import xtiling, get_tiles
 
 
@@ -29,6 +30,7 @@ def tiling_prod(path, nperseg, resolution=None, noverlap=0, centering=False, sid
         tuple: A tuple containing the dataset and extracted tiles.
     """
 
+    logging.info('Start tiling...')
     if 'GRDH' not in path and 'RS2' not in path and 'RMC' not in path and 'RCM3' not in path:
         raise ValueError("This function can only tile datasets with types 'GRDH', 'RS2', 'RMC', or 'RCM3'.")
     dataset = xsar.open_dataset(path, resolution)
@@ -56,6 +58,8 @@ def tiling_prod(path, nperseg, resolution=None, noverlap=0, centering=False, sid
     else:
         raise ValueError("Invalid tiling module. Please choose one of 'tiling', 'xtiling', or 'xbatcher'.")
 
+    logging.info('Done tiling...')
+
     if save_tiles:
         save_tile(tiles, resolution, save_dir)
 
@@ -80,6 +84,8 @@ def tiling_by_point(path ,resolution=None, posting_loc=None, posting_box_size=0,
         xarray.Dataset: Extracted tiles centered around the specified point.
     """
 
+    logging.info('Start tiling...')
+
     sar_ds = xsar.Sentinel1Dataset(path, resolution)
 
     # If posting_loc is not provided, use the center of the dataset's spatial extent
@@ -91,6 +97,8 @@ def tiling_by_point(path ,resolution=None, posting_loc=None, posting_box_size=0,
     point_coords = sar_ds.ll2coords(lon, lat)
     dist = {'line' : int(np.round(posting_box_size / 2 / 10.)), 'sample': int(np.round(posting_box_size / 2 / 10.))}
     tiles = sar_ds.dataset.sel(line=slice(point_coords[0] - dist['line'], point_coords[0] + dist['line']), sample=slice(point_coords[1] - dist['sample'], point_coords[1] + dist['sample']))
+
+    logging.info('Done tiling...')
 
     if save_tiles:
         save_tile(tiles, resolution, save_dir)
