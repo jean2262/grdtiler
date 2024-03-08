@@ -7,6 +7,7 @@ from datetime import datetime
 import logging
 from xsarslc.tools import xtiling, get_tiles
 
+
 def tiling_prod(path, nperseg, resolution=None, noverlap=0, centering=False, side='left', tiling_mod='tiling', save_tiles=False, save_dir='.'):
     """
     Perform tiling on SAR data based on the specified parameters.
@@ -74,9 +75,7 @@ def tiling_by_point(path ,posting_loc, posting_box_size=0, resolution=None, save
     Parameters:
         path (str): Path to the SAR dataset.
         posting_loc (tuple): Coordinates (longitude, latitude) of the point.
-            Default is None, which will use the center of the dataset's spatial extent.
         posting_box_size (float): Size of the box centered around the point (in meters). Default is zero.
-            Default is None, which will use the maximum size that fits within the dataset's spatial extent.
         resolution (str, optional): Resolution of the dataset (in meters). Default is None.
         save_tiles (bool, optional): Whether to save the extracted tiles. Default is False.
         save_dir (str): Saving directory.
@@ -201,8 +200,7 @@ def save_tile(tiles, resolution, save_dir):
             try:
                 os.makedirs(ds_dir, exist_ok=True)
             except OSError as e:
-                print(f"Error creating directory: {ds_dir}. Error: {e}")
-                continue
+                raise ValueError(f"Error creating directory: {ds_dir}. Error: {e}")
 
             for attr in ['footprint', 'multidataset', 'specialHandlingRequired']:
                 if attr in tile.attrs:

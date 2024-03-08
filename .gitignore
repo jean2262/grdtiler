@@ -44,6 +44,14 @@ Temporary Items
 
 # Generated files
 .idea/**/contentModel.xml
+.idea/**/*.xml
+.idea/**/*.iml
+.idea/**/profiles_settings.xml
+.idea/**/Project_Default.xml
+.idea/**/vcs.xml
+.idea/**/modules.xml
+.idea/**/misc.xml
+.idea/**/grdtiler.iml
 
 # Sensitive or high-churn files
 .idea/**/dataSources/
