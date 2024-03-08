@@ -7,7 +7,6 @@ from datetime import datetime
 import logging
 from xsarslc.tools import xtiling, get_tiles
 
-
 def tiling_prod(path, nperseg, resolution=None, noverlap=0, centering=False, side='left', tiling_mod='tiling', save_tiles=False, save_dir='.'):
     """
     Perform tiling on SAR data based on the specified parameters.
@@ -16,7 +15,7 @@ def tiling_prod(path, nperseg, resolution=None, noverlap=0, centering=False, sid
         path (str): Path to the SAR dataset.
         nperseg (int or dict): Size of the subsets for tiling. If int, same size is used for both lines and samples.
             If dict, it should contain 'line' and 'sample' keys specifying separate sizes.
-        resolution (float, optional): Resolution of the dataset. Default is None.
+        resolution (str, optional): Resolution of the dataset (in meters). Default is None.
         noverlap (int or dict, optional): Overlap size between adjacent subsets. Default is 0.
             If int, same overlap is used for both lines and samples. If dict, separate overlaps can be specified.
         centering (bool, optional): Whether subsets should be centered on the dataset. Default is False.
@@ -24,15 +23,17 @@ def tiling_prod(path, nperseg, resolution=None, noverlap=0, centering=False, sid
         tiling_mod (str, optional): Tiling module to use. Can be 'tiling' (custom tiling function), 'xtiling' (using xsarslc package),
             or 'xbatcher' (using xbatcher package). Default is 'tiling'.
         save_tiles (bool, optional): Whether to save the extracted tiles. Default is False.
-        save_dir (str): Saving directory
+        save_dir (str): Saving directory.
 
     Returns:
         tuple: A tuple containing the dataset and extracted tiles.
     """
 
+    if 'GRD' not in path and 'RS2' not in path and 'RMC' not in path and 'RCM3' not in path:
+        raise ValueError("This function can only tile datasets with types 'GRD', 'RS2', 'RMC', or 'RCM3'.")
+
     logging.info('Start tiling...')
-    if 'GRDH' not in path and 'RS2' not in path and 'RMC' not in path and 'RCM3' not in path:
-        raise ValueError("This function can only tile datasets with types 'GRDH', 'RS2', 'RMC', or 'RCM3'.")
+
     dataset = xsar.open_dataset(path, resolution)
 
     if tiling_mod == 'xtiling':
@@ -66,23 +67,26 @@ def tiling_prod(path, nperseg, resolution=None, noverlap=0, centering=False, sid
     return dataset, tiles
 
 
-def tiling_by_point(path ,resolution=None, posting_loc=None, posting_box_size=0, save_tiles=False, save_dir='.'):
+def tiling_by_point(path ,posting_loc, posting_box_size=0, resolution=None, save_tiles=False, save_dir='.'):
     """
     Extract tiles centered around a specified point from a SAR dataset.
 
     Parameters:
         path (str): Path to the SAR dataset.
-        resolution (float, optional): Resolution of the dataset. Default is None.
-        posting_loc (tuple, optional): Coordinates (longitude, latitude) of the center point.
+        posting_loc (tuple): Coordinates (longitude, latitude) of the point.
             Default is None, which will use the center of the dataset's spatial extent.
-        posting_box_size (float, optional): Size of the box centered around the point (in meters).
+        posting_box_size (float): Size of the box centered around the point (in meters). Default is zero.
             Default is None, which will use the maximum size that fits within the dataset's spatial extent.
+        resolution (str, optional): Resolution of the dataset (in meters). Default is None.
         save_tiles (bool, optional): Whether to save the extracted tiles. Default is False.
-        save_dir (str): Saving directory
+        save_dir (str): Saving directory.
 
     Returns:
         xarray.Dataset: Extracted tiles centered around the specified point.
     """
+
+    if 'GRD' not in path and 'RS2' not in path and 'RMC' not in path and 'RCM3' not in path:
+        raise ValueError("This function can only tile datasets with types 'GRD', 'RS2', 'RMC', or 'RCM3'.")
 
     logging.info('Start tiling...')
 
@@ -90,8 +94,7 @@ def tiling_by_point(path ,resolution=None, posting_loc=None, posting_box_size=0,
 
     # If posting_loc is not provided, use the center of the dataset's spatial extent
     if posting_loc is None:
-        point_lonlat =  sar_ds.footprint.centroid
-        posting_loc = (point_lonlat.x, point_lonlat.y)
+        raise ValueError('Posting localisation must be given.')
 
     lon, lat = posting_loc
     point_coords = sar_ds.ll2coords(lon, lat)
@@ -107,7 +110,7 @@ def tiling_by_point(path ,resolution=None, posting_loc=None, posting_box_size=0,
 
 
 
-def tiling(dataset, subset_size, noverlap=0, centering=False, side='left'):
+def tiling(dataset, subset_size, noverlap, centering, side):
     """
     Generate overlapping or non-overlapping subsets from a dataset.
 
@@ -129,7 +132,7 @@ def tiling(dataset, subset_size, noverlap=0, centering=False, side='left'):
     tile_line_size, tile_sample_size = (subset_size.get('line', 1), subset_size.get('sample', 1)) if isinstance \
         (subset_size, dict) else (subset_size, subset_size)
     line_overlap, sample_overlap = (noverlap.get('line', 0), noverlap.get('sample', 0)) if isinstance(noverlap, dict) else \
-    (int(noverlap), int(noverlap))
+    (noverlap, noverlap)
 
     total_lines, total_samples = dataset.sizes['line'], dataset.sizes['sample']
     mask = dataset
@@ -177,8 +180,8 @@ def save_tile(tiles, resolution, save_dir):
 
     Parameters:
         tiles (list): A list of tiles to be saved.
-        resolution (int): Resolution of the tiles.
-        save_dir (str): Saving directory
+        resolution (str): Resolution of the tiles.
+        save_dir (str): Saving directory.
 
     Returns:
         None
