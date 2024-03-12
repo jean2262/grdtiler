@@ -84,28 +84,39 @@ def tiling_by_point(path ,posting_loc, posting_box_size=0, resolution=None, save
         xarray.Dataset: Extracted tiles centered around the specified point.
     """
 
-    if 'GRD' not in path and 'RS2' not in path and 'RMC' not in path and 'RCM3' not in path:
-        raise ValueError("This function can only tile datasets with types 'GRD', 'RS2', 'RMC', or 'RCM3'.")
-
     logging.info('Start tiling...')
 
-    sar_ds = xsar.Sentinel1Dataset(path, resolution)
+    if 'GRD' in path and 'RS2' not in path and 'RCM' not in path:
+        sar_dm = xsar.Sentinel1Meta(path)
+        sar_ds = xsar.Sentinel1Dataset(sar_dm, resolution)
+    elif 'RS2' in path:
+        sar_ds = xsar.RadarSat2Dataset(path, resolution)
+    elif 'RCM' in path:
+        sar_ds = xsar.RcmDataset(path, resolution)
+    else:
+        raise ValueError("This function can only tile datasets with types 'GRD', 'RS2', 'RMC', or 'RCM3'.")
 
-    # If posting_loc is not provided, use the center of the dataset's spatial extent
-    if posting_loc is None:
-        raise ValueError('Posting localisation must be given.')
+    if posting_loc is None or np.isnan(posting_loc).any():
+        raise ValueError(f"Invalid posting location: {posting_loc}")
 
     lon, lat = posting_loc
     point_coords = sar_ds.ll2coords(lon, lat)
-    dist = {'line' : int(np.round(posting_box_size / 2 / 10.)), 'sample': int(np.round(posting_box_size / 2 / 10.))}
-    tiles = sar_ds.dataset.sel(line=slice(point_coords[0] - dist['line'], point_coords[0] + dist['line']), sample=slice(point_coords[1] - dist['sample'], point_coords[1] + dist['sample']))
+    if np.isnan(point_coords).any():
+        raise ValueError(f"Choose a point inside the footprint: {sar_ds.footprint}")
+
+    if 'GRD' in path and 'RS2' not in path and 'RCM' not in path:
+        dist = {'line': int(np.round(posting_box_size / 2 / sar_dm.pixel_line_m)),
+                'sample': int(np.round(posting_box_size / 2 / sar_dm.pixel_sample_m))}
+    else:
+        dist = {'line' : int(np.round(posting_box_size / 2 / sar_ds.dataset.pixel_line_m)), 'sample': int(np.round(posting_box_size / 2 / sar_ds.dataset.pixel_sample_m))}
+    tiles = sar_ds.dataset.sel(line=slice(point_coords[0] - dist['line'], point_coords[0] + dist['line']-1), sample=slice(point_coords[1] - dist['sample'], point_coords[1] + dist['sample']-1))
 
     logging.info('Done tiling...')
 
     if save_tiles:
         save_tile(tiles, resolution, save_dir)
 
-    return tiles
+    return sar_ds.dataset, tiles
 
 
 
