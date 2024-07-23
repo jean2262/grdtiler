@@ -10,7 +10,7 @@ dependencies:
     - tqdm
     - shapely
     - xsar
-    - xbatcher
+    - xsarsea
     - xsarslc
     - matplotlib
     - xarray-safe-s1
