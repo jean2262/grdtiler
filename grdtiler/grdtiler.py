@@ -1,87 +1,192 @@
+import logging
 import numpy as np
 import xsar
-import os
+import xarray as xr
 from tqdm import tqdm
-import xbatcher
-from datetime import datetime
-import logging
-from xsarslc.tools import xtiling, get_tiles
+from grdtiler.tools import sigma0_detrend, add_tiles_footprint, save_tile
 
 
-def tiling_prod(path, nperseg, resolution=None, noverlap=0, centering=False, side='left', tiling_mod='tiling', save_tiles=False, save_dir='.'):
+# Function to tile SAR dataset
+def tiling_prod(path, tile_size, resolution=None, noverlap=0, centering=False, side='left', save=False, save_dir='.'):
     """
-    Perform tiling on SAR data based on the specified parameters.
+    Tiles a radar or SAR dataset.
 
     Parameters:
-        path (str): Path to the SAR dataset.
-        nperseg (int or dict): Size of the subsets for tiling. If int, same size is used for both lines and samples.
-            If dict, it should contain 'line' and 'sample' keys specifying separate sizes.
-        resolution (str, optional): Resolution of the dataset (in meters). Default is None.
-        noverlap (int or dict, optional): Overlap size between adjacent subsets. Default is 0.
-            If int, same overlap is used for both lines and samples. If dict, separate overlaps can be specified.
-        centering (bool, optional): Whether subsets should be centered on the dataset. Default is False.
-        side (str, optional): Side to center on if centering is True. Can be 'left' or 'right'. Default is 'left'.
-        tiling_mod (str, optional): Tiling module to use. Can be 'tiling' (custom tiling function), 'xtiling' (using xsarslc package),
-            or 'xbatcher' (using xbatcher package). Default is 'tiling'.
-        save_tiles (bool, optional): Whether to save the extracted tiles. Default is False.
-        save_dir (str): Saving directory.
+    - path (str): Path to the radar or SAR dataset.
+    - tile_size (tuple): Size of each tile in pixels, specified as a tuple (height, width).
+    - resolution (str, optional): Resolution of the dataset. Defaults to None.
+    - noverlap (int, optional): Number of pixels to overlap between adjacent tiles. Defaults to 0.
+    - centering (bool, optional): If True, centers the tiles within the dataset. Defaults to False.
+    - side (str, optional): Side of the dataset from which tiling starts. Possible values: 'left' or 'right'. Defaults to 'left'.
+    - save (bool, optional): If True, saves the tiled dataset. Defaults to False.
+    - save_dir (str, optional): Directory where the tiled dataset should be saved. Defaults to '.' (current directory).
 
     Returns:
-        tuple: A tuple containing the dataset and extracted tiles.
+    - dataset: The radar or SAR dataset.
+    - tiles: The tiled radar or SAR dataset.
     """
-
-    if 'GRD' not in path and 'RS2' not in path and 'RMC' not in path and 'RCM3' not in path:
-        raise ValueError("This function can only tile datasets with types 'GRD', 'RS2', 'RMC', or 'RCM3'.")
 
     logging.info('Start tiling...')
 
-    dataset = xsar.open_dataset(path, resolution)
-
-    if tiling_mod == 'xtiling':
-        tiles_index = xtiling(ds=dataset, nperseg=nperseg, noverlap=noverlap, centering=centering, side=side)
-        tiles = get_tiles(ds=dataset, tiles_index=tiles_index)
-
-    elif tiling_mod == 'xbatcher':
-        if centering:
-            print('Warning: xbatcher tiling module does not support centering option.')
-        dataset = dataset.rename({'sample': 'column'})
-        if not isinstance(nperseg, dict):
-            nperseg = {'line': nperseg, 'column': nperseg}
-        if 'sample' in nperseg:
-            nperseg['column'] = nperseg.pop('sample')
-        if not isinstance(noverlap, dict):
-            noverlap = {'line': noverlap, 'column': noverlap}
-        xb_tiles = xbatcher.BatchGenerator(ds=dataset, input_dims=nperseg, input_overlap=noverlap)
-        tiles = [tile.rename({'column': 'sample'}) for tile in xb_tiles]
-
-    elif tiling_mod == 'tiling':
-        tiles = tiling(dataset=dataset, subset_size=nperseg, centering=centering, side=side, noverlap=noverlap)
-
+    if 'GRD' in path or 'RS2' in path or 'RCM' in path:
+        dataset = xsar.open_dataset(path, resolution)
     else:
-        raise ValueError("Invalid tiling module. Please choose one of 'tiling', 'xtiling', or 'xbatcher'.")
+        raise ValueError("This function can only tile datasets with types 'GRD', 'RS2' or 'RMC'.")
+
+    dataset, nperseg = tile_normalize(dataset, tile_size, resolution)
+    tiles = tiling(dataset=dataset, tile_size=nperseg, noverlap=noverlap, centering=centering, side=side)
 
     logging.info('Done tiling...')
 
-    if save_tiles:
-        save_tile(tiles, resolution, save_dir)
+    if save:
+        save_tile(tiles, save_dir)
 
     return dataset, tiles
 
 
-def tiling_by_point(path ,posting_loc, posting_box_size=0, resolution=None, save_tiles=False, save_dir='.'):
+# Function to normalize SAR dataset for tiling
+def tile_normalize(dataset, tile_size, resolution):
     """
-    Extract tiles centered around a specified point from a SAR dataset.
+    Normalize a radar or SAR dataset for tiling.
 
     Parameters:
-        path (str): Path to the SAR dataset.
-        posting_loc (tuple): Coordinates (longitude, latitude) of the point.
-        posting_box_size (float): Size of the box centered around the point (in meters). Default is zero.
-        resolution (str, optional): Resolution of the dataset (in meters). Default is None.
-        save_tiles (bool, optional): Whether to save the extracted tiles. Default is False.
-        save_dir (str): Saving directory.
+    - dataset (xarray.Dataset): The radar or SAR dataset.
+    - tile_size (int or dict): Size of each tile in meters. If an int, it represents the size along both dimensions.
+      If a dictionary, it should have keys 'line' and/or 'sample' indicating size along each dimension.
+    - resolution (str): Resolution of the dataset in meters.
 
     Returns:
-        xarray.Dataset: Extracted tiles centered around the specified point.
+    - dataset (xarray.Dataset): The normalized radar or SAR dataset.
+    - nperseg (int or dict): Number of pixels per segment for tiling. If an int, it represents the number of pixels
+      along both dimensions. If a dictionary, it has keys 'line' and/or 'sample' indicating the number of pixels
+      per segment along each dimension.
+    """
+    if resolution is not None:
+        resolution_value = int(resolution.split('m')[0])
+    else:
+        resolution_value = 1
+    if isinstance(tile_size, dict):
+        tile_line_size = tile_size.get('line', 1)
+        tile_sample_size = tile_size.get('sample', 1)
+        nperseg = {'line': tile_line_size // resolution_value, 'sample': tile_sample_size // resolution_value}
+        dataset.attrs['tile_size'] = f'{tile_line_size}m*{tile_sample_size}m (line * sample)'
+    else:
+        nperseg = tile_size // resolution_value
+        dataset.attrs['tile_size'] = f'{tile_size}m*{tile_size}m (line * sample)'
+
+    dataset.attrs.update({
+        'resolution': resolution,
+        'polarizations': dataset.attrs['pols'],
+        'processing_level': dataset.attrs['product'],
+        'main_footprint': dataset.attrs['footprint']
+    })
+
+    if 'platform_heading' in dataset.attrs:
+        dataset.attrs['platform_heading(degree)'] = dataset.attrs['platform_heading']
+
+    dataset['sigma0_no_nan'] = xr.where(dataset['land_mask'], np.nan, dataset['sigma0'])
+    dataset['sigma0_detrend'] = sigma0_detrend(dataset['sigma0_no_nan'], dataset['incidence'], line=10)
+
+    if 'longitude' in dataset.variables and 'latitude' in dataset.variables:
+        dataset['sigma0'] = dataset['sigma0'].transpose(*dataset['sigma0'].dims)
+
+    to_keep_list = ['sigma0', 'sigma0_detrend', 'land_mask', 'ground_heading', 'longitude', 'latitude', 'incidence',
+                    'nesz']
+    dataset = dataset.drop_vars(set(dataset.data_vars) - set(to_keep_list))
+
+    attributes_to_remove = {'name', 'multidataset', 'product', 'pols', 'footprint',
+                            'platform_heading'}
+    dataset.attrs = {key: value for key, value in dataset.attrs.items() if key not in attributes_to_remove}
+
+    if 'spatial_ref' in dataset.coords and 'gcps' in dataset.spatial_ref.attrs:
+        dataset.spatial_ref.attrs.pop('gcps')
+    return dataset, nperseg
+
+
+# Function to generate tiles from SAR dataset
+def tiling(dataset, tile_size, noverlap, centering, side):
+    """
+    Generates tiles from a radar or SAR (Synthetic Aperture Radar) dataset.
+
+    Parameters:
+    - dataset (xarray.Dataset): The radar or SAR dataset.
+    - subset_size (tuple or dict): Size of each tile in pixels. If a tuple, it represents (height, width) of the tile.
+      If a dictionary, it should have keys 'line' and/or 'sample' indicating size along each dimension.
+    - noverlap (int or dict): Number of pixels to overlap between adjacent tiles. If an int, it's applied to both
+      dimensions. If a dictionary, it should have keys 'line' and/or 'sample' indicating overlap along each dimension.
+    - centering (bool): If True, centers the tiles within the dataset.
+    - side (str): Side of the dataset from which tiling starts. Possible values: 'left' or 'right'.
+
+    Returns:
+    - all_tiles (xarray.Dataset): A concatenated xarray dataset containing all generated tiles.
+    """
+    tiles = []
+    tile_line_size, tile_sample_size = (tile_size.get('line', 1), tile_size.get('sample', 1)) \
+        if isinstance(tile_size, dict) else (tile_size, tile_size)
+    line_overlap, sample_overlap = (noverlap.get('line', 0), noverlap.get('sample', 0)) \
+        if isinstance(noverlap, dict) else (noverlap, noverlap)
+
+    total_lines, total_samples = dataset.sizes['line'], dataset.sizes['sample']
+    mask = dataset
+
+    if noverlap >= min(tile_line_size, tile_sample_size):
+        raise ValueError('Overlap size must be less than tile size')
+
+    if centering:
+        complete_segments_line = (total_lines - tile_line_size) // (tile_line_size - line_overlap) + 1
+        mask_size_line = complete_segments_line * tile_line_size - (complete_segments_line - 1) * line_overlap
+
+        complete_segments_sample = (total_samples - tile_sample_size) // (tile_sample_size - sample_overlap) + 1
+        mask_size_sample = complete_segments_sample * tile_sample_size - (complete_segments_sample - 1) * sample_overlap
+
+        if side == 'right':
+            start_line = (total_lines // 2) - (mask_size_line // 2)
+            start_sample = (total_samples // 2) - (mask_size_sample // 2)
+        else:
+            start_line = (total_lines // 2) + (total_lines % 2) - (mask_size_line // 2)
+            start_sample = (total_samples // 2) + (total_samples % 2) - (mask_size_sample // 2)
+
+        mask = dataset.isel(line=slice(start_line, start_line + mask_size_line),
+                            sample=slice(start_sample, start_sample + mask_size_sample))
+
+    step_line = tile_line_size - noverlap
+    step_sample = tile_sample_size - noverlap
+
+    for line_start in tqdm(range(0, total_lines - tile_line_size + 1, step_line), desc='Tiling'):
+        for sample_start in range(0, total_samples - tile_sample_size + 1, step_sample):
+            subset = mask.isel(line=slice(line_start, line_start + tile_line_size),
+                               sample=slice(sample_start, sample_start + tile_sample_size))
+            if len(subset['line'].values) == tile_line_size and len(subset['sample'].values) == tile_sample_size:
+                tiles.append(
+                    subset.drop_indexes(['line', 'sample']).rename_dims({'line': 'tile_line', 'sample': 'tile_sample'}))
+    if not tiles:
+        raise ValueError('No tiles')
+
+    tiles_with_footprint = add_tiles_footprint(tiles)
+    all_tiles = xr.concat(tiles_with_footprint, dim='tile')
+    all_tiles['tile_footprint'].attrs['comment'] = 'Footprint of the tile'
+    all_tiles['lon_centroid'].attrs['comment'] = 'Longitude of the tile footprint\'s centroid'
+    all_tiles['lat_centroid'].attrs['comment'] = 'Latitude of the tile footprint\'s centroid'
+
+    return all_tiles
+
+
+# Function to tile a radar or SAR dataset around specified points
+def tiling_by_point(path, posting_loc, tile_size, resolution=None, save=False, save_dir='.'):
+    """
+    Tiles a radar or SAR dataset around specified points.
+
+    Parameters:
+    - path (str): Path to the radar or SAR dataset.
+    - posting_loc (list): List of points (geopandas GeoSeries) around which to tile the dataset.
+    - tile_size (int): Size of the box (in meters) to be tiled around each point.
+    - resolution (float, optional): Resolution of the dataset. Defaults to None.
+    - save (bool, optional): If True, saves the tiled dataset. Defaults to False.
+    - save_dir (str, optional): Directory where the tiled dataset should be saved. Defaults to '.' (current directory).
+
+    Returns:
+    - dataset: The radar or SAR dataset.
+    - all_tiles (xarray.Dataset): A concatenated xarray dataset containing all generated tiles.
     """
 
     logging.info('Start tiling...')
@@ -96,135 +201,39 @@ def tiling_by_point(path ,posting_loc, posting_box_size=0, resolution=None, save
     else:
         raise ValueError("This function can only tile datasets with types 'GRD', 'RS2', 'RMC', or 'RCM3'.")
 
-    if posting_loc is None or np.isnan(posting_loc).any():
-        raise ValueError(f"Invalid posting location: {posting_loc}")
+    tiles = []
+    dataset = sar_ds.dataset
+    dataset, _ = tile_normalize(dataset, tile_size, resolution)
+    for point in tqdm(posting_loc, desc='Tiling'):
+        if point is None:
+            raise ValueError(f"Invalid posting location: {posting_loc}")
 
-    lon, lat = posting_loc
-    point_coords = sar_ds.ll2coords(lon, lat)
-    if np.isnan(point_coords).any():
-        raise ValueError(f"Choose a point inside the footprint: {sar_ds.footprint}")
+        lon, lat = point.x, point.y
+        point_coords = sar_ds.ll2coords(lon, lat)
+        if np.isnan(point_coords).any():
+            raise ValueError(f"Choose a point inside the footprint: {sar_ds.footprint}")
 
-    if 'GRD' in path and 'RS2' not in path and 'RCM' not in path:
-        dist = {'line': int(np.round(posting_box_size / 2 / sar_dm.pixel_line_m)),
-                'sample': int(np.round(posting_box_size / 2 / sar_dm.pixel_sample_m))}
-    else:
-        dist = {'line' : int(np.round(posting_box_size / 2 / sar_ds.dataset.pixel_line_m)), 'sample': int(np.round(posting_box_size / 2 / sar_ds.dataset.pixel_sample_m))}
-    tiles = sar_ds.dataset.sel(line=slice(point_coords[0] - dist['line'], point_coords[0] + dist['line']-1), sample=slice(point_coords[1] - dist['sample'], point_coords[1] + dist['sample']-1))
+        if 'GRD' in path and 'RS2' not in path and 'RCM' not in path:
+            dist = {'line': int(np.round(tile_size / 2 / sar_dm.pixel_line_m)),
+                    'sample': int(np.round(tile_size / 2 / sar_dm.pixel_sample_m))}
+        else:
+            dist = {'line': int(np.round(tile_size / 2 / dataset.pixel_line_m)),
+                    'sample': int(np.round(tile_size / 2 / dataset.pixel_sample_m))}
+
+        tile = dataset.sel(line=slice(point_coords[0] - dist['line'], point_coords[0] + dist['line'] - 1),
+                           sample=slice(point_coords[1] - dist['sample'], point_coords[1] + dist['sample'] - 1))
+
+        tiles.append(tile.drop_indexes(['line', 'sample']).rename_dims({'line': 'tile_line', 'sample': 'tile_sample'}))
 
     logging.info('Done tiling...')
 
-    if save_tiles:
-        save_tile(tiles, resolution, save_dir)
+    tiles = add_tiles_footprint(tiles)
+    all_tiles = xr.concat(tiles, dim='tile')
+    all_tiles['tile_footprint'].attrs['comment'] = 'Footprint of the tile'
+    all_tiles['lon_centroid'].attrs['comment'] = 'Longitude of the tile footprint\'s centroid'
+    all_tiles['lat_centroid'].attrs['comment'] = 'Latitude of the tile footprint\'s centroid'
 
-    return sar_ds.dataset, tiles
+    if save:
+        save_tile(all_tiles, save_dir)
 
-
-
-def tiling(dataset, subset_size, noverlap, centering, side):
-    """
-    Generate overlapping or non-overlapping subsets from a dataset.
-
-    Parameters:
-        dataset (xarray.Dataset or xarray.DataArray): Input dataset.
-        subset_size (int or dict): Size of the subsets. If int, same size is used for both lines and samples.
-            If dict, it should contain 'line' and 'sample' keys specifying separate sizes.
-        noverlap (int or dict, optional): Overlap size between adjacent subsets. Default is 0.
-            If int, same overlap is used for both lines and samples. If dict, separate overlaps can be specified.
-        centering (bool, optional): Whether subsets should be centered on the dataset. Default is False.
-        side (str, optional): Side to center on if centering is True. Can be 'left' or 'right'. Default is 'left'.
-
-    Returns:
-        list: List of subsets.
-    """
-    subsets = []
-
-    # Calculate tile size and overlap
-    tile_line_size, tile_sample_size = (subset_size.get('line', 1), subset_size.get('sample', 1)) if isinstance \
-        (subset_size, dict) else (subset_size, subset_size)
-    line_overlap, sample_overlap = (noverlap.get('line', 0), noverlap.get('sample', 0)) if isinstance(noverlap, dict) else \
-    (noverlap, noverlap)
-
-    total_lines, total_samples = dataset.sizes['line'], dataset.sizes['sample']
-    mask = dataset
-
-    # Centering logic
-    if centering:
-        complete_segments_line = (total_lines - tile_line_size) // (tile_line_size - line_overlap) + 1
-        mask_size_line = complete_segments_line * tile_line_size - (complete_segments_line - 1) * line_overlap
-
-        complete_segments_sample = (total_samples - tile_sample_size) // (tile_sample_size - sample_overlap) + 1
-        mask_size_sample = complete_segments_sample * tile_sample_size - (complete_segments_sample - 1) * sample_overlap
-
-        if side == 'right':
-            start_line = (total_lines // 2) - (mask_size_line // 2)
-            start_sample = (total_samples // 2) - (mask_size_sample // 2)
-
-        else:
-            start_line = (total_lines // 2) + (total_lines % 2) - (mask_size_line // 2)
-            start_sample = (total_samples // 2) + (total_samples % 2) - (mask_size_sample // 2)
-
-        mask = dataset.isel(line=slice(start_line, start_line + mask_size_line),
-                            sample=slice(start_sample, start_sample + mask_size_sample))
-
-    # Input validation
-    if noverlap >= min(tile_line_size, tile_sample_size):
-        raise ValueError('Overlap size must be less than tile size')
-
-    # Calculate step sizes
-    step_line = tile_line_size - noverlap
-    step_sample = tile_sample_size - noverlap
-
-    # Generate subsets
-    for line_start in range(0, total_lines - tile_line_size + 1, step_line):
-        for sample_start in range(0, total_samples - tile_sample_size + 1, step_sample):
-            subset = mask.isel(line=slice(line_start, line_start + tile_line_size),
-                               sample=slice(sample_start, sample_start + tile_sample_size))
-            subsets.append(subset)
-
-    return subsets
-
-
-def save_tile(tiles, resolution, save_dir):
-    """
-    Save tiles into NetCDF files.
-
-    Parameters:
-        tiles (list): A list of tiles to be saved.
-        resolution (str): Resolution of the tiles.
-        save_dir (str): Saving directory.
-
-    Returns:
-        None
-    """
-    base_path = save_dir
-    filename = os.path.basename(tiles[0].name).split(".SAFE")[0]
-    year = datetime.strptime(tiles[0].start_date, '%Y-%m-%d %H:%M:%S.%f').year
-    day = datetime.strptime(tiles[0].start_date, '%Y-%m-%d %H:%M:%S.%f').timetuple().tm_yday
-
-    for i, tile in tqdm(enumerate(tiles), total=len(tiles), desc='Saving'):
-        for pol in tile.pol.values:
-            mode = tile.sel(pol=pol).swath
-            size_line = tile.sel(pol=pol).line.size
-            size_sample = tile.sel(pol=pol).sample.size
-            ds_dir = f"{base_path}/data_nc/{mode}/size_{size_line}_{size_sample}/res_{resolution}/{year}/{day}/{filename}/{pol}"
-
-            try:
-                os.makedirs(ds_dir, exist_ok=True)
-            except OSError as e:
-                raise ValueError(f"Error creating directory: {ds_dir}. Error: {e}")
-
-            for attr in ['footprint', 'multidataset', 'specialHandlingRequired']:
-                if attr in tile.attrs:
-                    tile.attrs[attr] = str(tile.attrs[attr])
-
-            if 'gcps' in tile.spatial_ref.attrs:
-                tile.spatial_ref.attrs.pop('gcps')
-
-            save_path = os.path.join(f"{ds_dir}/{filename}_{pol}_{i}.nc")
-
-            try:
-                tile.to_netcdf(save_path, mode='w', format='NETCDF4')
-            except Exception as e:
-                print(f"Error saving tile to {save_path}. Error: {e}")
-
-
+    return dataset, all_tiles
