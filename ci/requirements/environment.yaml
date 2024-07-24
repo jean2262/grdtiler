@@ -9,7 +9,7 @@ dependencies:
     - cartopy
     - tqdm
     - shapely
-    - xsar
+    - xsar=2024.2.1
     - xsarsea
     - xsarslc
     - matplotlib
