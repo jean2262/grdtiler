@@ -7,13 +7,14 @@ from grdtiler.tools import sigma0_detrend, add_tiles_footprint, save_tile
 
 
 # Function to tile SAR dataset
-def tiling_prod(path, tile_size, resolution=None, noverlap=0, centering=False, side='left', save=False, save_dir='.'):
+def tiling_prod(path, tile_size, resolution=None, detrend=True, noverlap=0, centering=False, side='left', save=False, save_dir='.'):
     """
     Tiles a radar or SAR dataset.
 
     Parameters:
     - path (str): Path to the radar or SAR dataset.
     - tile_size (tuple): Size of each tile in pixels, specified as a tuple (height, width).
+    - detrend (bool, optional): Make detrend image. Default to True.
     - resolution (str, optional): Resolution of the dataset. Defaults to None.
     - noverlap (int, optional): Number of pixels to overlap between adjacent tiles. Defaults to 0.
     - centering (bool, optional): If True, centers the tiles within the dataset. Defaults to False.
@@ -33,7 +34,7 @@ def tiling_prod(path, tile_size, resolution=None, noverlap=0, centering=False, s
     else:
         raise ValueError("This function can only tile datasets with types 'GRD', 'RS2' or 'RMC'.")
 
-    dataset, nperseg = tile_normalize(dataset, tile_size, resolution)
+    dataset, nperseg = tile_normalize(dataset, tile_size, resolution, detrend)
     tiles = tiling(dataset=dataset, tile_size=nperseg, noverlap=noverlap, centering=centering, side=side)
 
     logging.info('Done tiling...')
@@ -45,7 +46,7 @@ def tiling_prod(path, tile_size, resolution=None, noverlap=0, centering=False, s
 
 
 # Function to normalize SAR dataset for tiling
-def tile_normalize(dataset, tile_size, resolution):
+def tile_normalize(dataset, tile_size, resolution, detrend=True):
     """
     Normalize a radar or SAR dataset for tiling.
 
@@ -54,6 +55,7 @@ def tile_normalize(dataset, tile_size, resolution):
     - tile_size (int or dict): Size of each tile in meters. If an int, it represents the size along both dimensions.
       If a dictionary, it should have keys 'line' and/or 'sample' indicating size along each dimension.
     - resolution (str): Resolution of the dataset in meters.
+    - detrend (bool, optional): Make detrend image. Default to True.
 
     Returns:
     - dataset (xarray.Dataset): The normalized radar or SAR dataset.
@@ -84,14 +86,17 @@ def tile_normalize(dataset, tile_size, resolution):
     if 'platform_heading' in dataset.attrs:
         dataset.attrs['platform_heading(degree)'] = dataset.attrs['platform_heading']
 
-    dataset['sigma0_no_nan'] = xr.where(dataset['land_mask'], np.nan, dataset['sigma0'])
-    dataset['sigma0_detrend'] = sigma0_detrend(dataset['sigma0_no_nan'], dataset['incidence'], line=10)
+    to_keep_list = ['sigma0', 'land_mask', 'ground_heading', 'longitude', 'latitude', 'incidence',
+                    'nesz']
+
+    if detrend:
+        dataset['sigma0_no_nan'] = xr.where(dataset['land_mask'], np.nan, dataset['sigma0'])
+        dataset['sigma0_detrend'] = sigma0_detrend(dataset['sigma0_no_nan'], dataset['incidence'], line=10)
+        to_keep_list.append('sigma0_detrend')
 
     if 'longitude' in dataset.variables and 'latitude' in dataset.variables:
         dataset['sigma0'] = dataset['sigma0'].transpose(*dataset['sigma0'].dims)
 
-    to_keep_list = ['sigma0', 'sigma0_detrend', 'land_mask', 'ground_heading', 'longitude', 'latitude', 'incidence',
-                    'nesz']
     dataset = dataset.drop_vars(set(dataset.data_vars) - set(to_keep_list))
 
     attributes_to_remove = {'name', 'multidataset', 'product', 'pols', 'footprint',
@@ -172,7 +177,7 @@ def tiling(dataset, tile_size, noverlap, centering, side):
 
 
 # Function to tile a radar or SAR dataset around specified points
-def tiling_by_point(path, posting_loc, tile_size, resolution=None, save=False, save_dir='.'):
+def tiling_by_point(path, posting_loc, tile_size, resolution=None, detrend=True, save=False, save_dir='.'):
     """
     Tiles a radar or SAR dataset around specified points.
 
@@ -181,6 +186,7 @@ def tiling_by_point(path, posting_loc, tile_size, resolution=None, save=False, s
     - posting_loc (list): List of points (geopandas GeoSeries) around which to tile the dataset.
     - tile_size (int): Size of the box (in meters) to be tiled around each point.
     - resolution (float, optional): Resolution of the dataset. Defaults to None.
+    - detrend (bool, optional): Make detrend image. Default to True.
     - save (bool, optional): If True, saves the tiled dataset. Defaults to False.
     - save_dir (str, optional): Directory where the tiled dataset should be saved. Defaults to '.' (current directory).
 
@@ -203,7 +209,7 @@ def tiling_by_point(path, posting_loc, tile_size, resolution=None, save=False, s
 
     tiles = []
     dataset = sar_ds.dataset
-    dataset, _ = tile_normalize(dataset, tile_size, resolution)
+    dataset, _ = tile_normalize(dataset, tile_size, resolution, detrend)
     for point in tqdm(posting_loc, desc='Tiling'):
         if point is None:
             raise ValueError(f"Invalid posting location: {posting_loc}")
