@@ -28,5 +28,4 @@ def test_tile_comparison(path_to_product_sample):
 
     # Comparison
     for i in range(len(tiles_x)):
-        assert np.array_equal(tiles_x[i].sel(pol='VV').sigma0.values, tiles_t.sel(tile=i, pol='VV').sigma0.values), \
-            f"Tile {i} values are not equal"
+        assert np.array_equal(tiles_x[i].sel(pol='VV').sigma0.values, tiles_t.sel(tile=i, pol='VV').sigma0.values), f"Tile {i} values are not equal"
