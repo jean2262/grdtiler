@@ -62,7 +62,6 @@ def tiling_prod(
     return dataset, tiles
 
 
-# Function to normalize SAR dataset for tiling
 def tile_normalize(
     dataset,
     tile_size,
@@ -132,7 +131,6 @@ def tile_normalize(
     return dataset, nperseg
 
 
-# Function to generate tiles from SAR dataset
 def tiling(
     dataset,
     tile_size,
@@ -211,7 +209,6 @@ def tiling(
     return all_tiles
 
 
-# Function to tile a radar or SAR dataset around specified points
 def tiling_by_point(
     path,
     posting_loc,
