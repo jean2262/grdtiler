@@ -1,9 +1,5 @@
-import matplotlib.pyplot as plt
 from tqdm import tqdm
-import cartopy.crs as ccrs
-import cartopy.feature as cfeature
 from shapely.geometry import Polygon
-import shapely
 import os
 import numpy as np
 import logging
@@ -11,20 +7,24 @@ from datetime import datetime
 from xsarsea.windspeed.models import get_model
 
 
+# From xsarsea:
 def sigma0_detrend(sigma0, inc_angle, wind_speed_gmf=10., wind_dir_gmf=45., model='gmf_cmodifr2', line=10):
     """
     Detrend sigma0 using a given wind speed model.
 
-    Parameters:
-    - sigma0 (xarray.DataArray): Sigma0 data.
-    - inc_angle (xarray.DataArray): Incidence angle data.
-    - wind_speed_gmf (float): Wind speed for the GMF model.
-    - wind_dir_gmf (float): Wind direction for the GMF model.
-    - model (str): GMF model to use.
-    - line (int): Line to use for sampling.
+    Args:
+        sigma0 (xr.DataArray): Sigma0 data.
+        inc_angle (xr.DataArray): Incidence angle data.
+        wind_speed_gmf (float, optional): Wind speed for the GMF model. Defaults to 10.0.
+        wind_dir_gmf (float, optional): Wind direction for the GMF model. Defaults to 45.0.
+        model (str, optional): GMF model to use. Defaults to 'gmf_cmodifr2'.
+        line (int, optional): Line to use for sampling. Defaults to 10.
 
     Returns:
-    - detrended (xarray.DataArray): Detrended sigma0 data.
+        xr.DataArray: Detrended sigma0 data.
+
+    Raises:
+        ValueError: If the model is not recognized or if there's an error in detrending.
     """
     model = get_model(model)
     try:
@@ -47,11 +47,14 @@ def add_tiles_footprint(tiles):
     """
     Add footprint information to each tile in a list of tiles.
 
-    Parameters:
-    - tiles (list): List of tiles data.
+    Args:
+        tiles (list): List of tile datasets.
 
     Returns:
-    - tiles_with_footprint (list): List of tiles data with footprint information added.
+        List[xr.Dataset]: List of tile datasets with footprint information added.
+
+    Raises:
+        ValueError: If the input is not a list or if any tile is missing required coordinates.
     """
     if not isinstance(tiles, list):
         raise ValueError("tiles must be a list of tiles data.")
@@ -76,9 +79,9 @@ def save_tile(tiles, save_dir):
     """
     Saves radar or SAR tiles to NetCDF files.
 
-    Parameters:
-    - tiles (xarray.Dataset): The radar or SAR tiles dataset.
-    - save_dir (str): Directory where the tiles should be saved.
+    Args:
+        tiles (xr.Dataset): The radar or SAR tiles dataset.
+        save_dir (str): Directory where the tiles should be saved.
     """
     base_path = save_dir
     year = datetime.strptime(tiles.start_date, '%Y-%m-%d %H:%M:%S.%f').year
@@ -134,50 +137,3 @@ def save_tile(tiles, save_dir):
     else:
         logging.info(f"This file {save_path} already exists.")
 
-
-def plot_cartopy_data(ds=None, tiles=None, polarization='VV', file_name='map'):
-    """
-    Plot SAR dataset or tiles overlaid on a map using Cartopy.
-
-    Parameters:
-    - ds (xarray.Dataset): SAR dataset.
-    - tiles (list of xarray.DataArray): List of tiles.
-    - polarization (str): Polarization to select from dataset or tiles.
-    - file_name (str): Name of the output plot file.
-
-    Returns:
-    - None
-    """
-    if ds is None and tiles is None:
-        raise ValueError("Either 'ds' or 'tiles' must be provided.")
-    if tiles is not None and not isinstance(tiles, list):
-        raise ValueError("'tiles' must be a list of tiles.")
-
-    plt.figure(figsize=(10, 9))
-    ax = plt.axes(projection=ccrs.PlateCarree())
-
-    if ds is not None:
-        ds_p = ds.sel(pol=polarization)
-        ax.pcolormesh(ds_p.longitude.data, ds_p.latitude.data, ds_p.sigma0.data, transform=ccrs.PlateCarree(),
-                      cmap='viridis', zorder=1)
-
-    if tiles is not None:
-        for tile in tiles:
-            img = tile.sel(pol=polarization).sigma0
-            lon = tile.sel(pol=polarization).longitude
-            lat = tile.sel(pol=polarization).latitude
-            ax.pcolormesh(lon.data, lat.data, img.data, transform=ccrs.PlateCarree(), cmap='gray',
-                          zorder=1)  # , vmin=0, vmax=0.02
-
-            poly = shapely.wkt.loads(str(tile.tile_footprint.values))
-            ax.plot(*poly.exterior.xy, '-b', linewidth=0.5, label='Patches footprint', zorder=1)
-
-    ax.add_feature(cfeature.LAND)
-    ax.add_feature(cfeature.COASTLINE)
-
-    ax.gridlines(draw_labels=True, dms=True, x_inline=False, y_inline=False)
-
-    ax.set_xlabel('Longitude')
-    ax.set_ylabel('Latitude')
-    plt.title(file_name)
-    plt.show()

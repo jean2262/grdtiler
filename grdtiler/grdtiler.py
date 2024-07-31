@@ -7,34 +7,51 @@ from grdtiler.tools import sigma0_detrend, add_tiles_footprint, save_tile
 
 
 # Function to tile SAR dataset
-def tiling_prod(path, tile_size, resolution=None, detrend=True, noverlap=0, centering=False, side='left', save=False, save_dir='.'):
+def tiling_prod(
+    path,
+    tile_size,
+    resolution=None,
+    detrend=True,
+    noverlap=0,
+    centering=False,
+    side='left',
+    save=False,
+    save_dir='.',
+    to_keep_var=None
+):
     """
     Tiles a radar or SAR dataset.
 
-    Parameters:
-    - path (str): Path to the radar or SAR dataset.
-    - tile_size (tuple): Size of each tile in pixels, specified as a tuple (height, width).
-    - detrend (bool, optional): Make detrend image. Default to True.
-    - resolution (str, optional): Resolution of the dataset. Defaults to None.
-    - noverlap (int, optional): Number of pixels to overlap between adjacent tiles. Defaults to 0.
-    - centering (bool, optional): If True, centers the tiles within the dataset. Defaults to False.
-    - side (str, optional): Side of the dataset from which tiling starts. Possible values: 'left' or 'right'. Defaults to 'left'.
-    - save (bool, optional): If True, saves the tiled dataset. Defaults to False.
-    - save_dir (str, optional): Directory where the tiled dataset should be saved. Defaults to '.' (current directory).
+    Args:
+        path (str): Path to the radar or SAR dataset.
+        tile_size (int or dict): Size of each tile in pixels (height, width).
+        resolution (str , optional): Resolution of the dataset. Defaults to None.
+        detrend (bool, optional): Whether to detrend the image. Defaults to True.
+        noverlap (int, optional): Number of pixels to overlap between adjacent tiles. Defaults to 0.
+        centering (bool, optional): If True, centers the tiles within the dataset. Defaults to False.
+        side (str, optional): Side of the dataset from which tiling starts ('left' or 'right'). Defaults to 'left'.
+        save (bool, optional): If True, saves the tiled dataset. Defaults to False.
+        save_dir (str, optional): Directory where the tiled dataset should be saved. Defaults to current directory.
+        to_keep_var (list, optional): Variables to keep in the dataset. Defaults to None.
 
     Returns:
-    - dataset: The radar or SAR dataset.
-    - tiles: The tiled radar or SAR dataset.
-    """
+        dataset: The radar or SAR dataset.
+        tiles: The tiled radar or SAR dataset.
 
+    Raises:
+        ValueError: If the dataset type is not 'GRD', 'RS2', or 'RCM'.
+    """
     logging.info('Start tiling...')
 
-    if 'GRD' in path or 'RS2' in path or 'RCM' in path:
-        dataset = xsar.open_dataset(path, resolution)
-    else:
-        raise ValueError("This function can only tile datasets with types 'GRD', 'RS2' or 'RMC'.")
+    supported_datasets = {'GRD', 'RS2', 'RCM'}
+    dataset_type = next((dt for dt in supported_datasets if dt in path), None)
 
-    dataset, nperseg = tile_normalize(dataset, tile_size, resolution, detrend)
+    if not dataset_type:
+        raise ValueError(f"Unsupported dataset type. Supported types are: {', '.join(supported_datasets)}")
+
+    dataset = xsar.open_dataset(path, resolution)
+
+    dataset, nperseg = tile_normalize(dataset, tile_size, resolution, detrend, to_keep_var)
     tiles = tiling(dataset=dataset, tile_size=nperseg, noverlap=noverlap, centering=centering, side=side)
 
     logging.info('Done tiling...')
@@ -46,27 +63,37 @@ def tiling_prod(path, tile_size, resolution=None, detrend=True, noverlap=0, cent
 
 
 # Function to normalize SAR dataset for tiling
-def tile_normalize(dataset, tile_size, resolution, detrend=True):
+def tile_normalize(
+    dataset,
+    tile_size,
+    resolution,
+    detrend=True,
+    to_keep_var=None
+):
     """
     Normalize a radar or SAR dataset for tiling.
 
-    Parameters:
-    - dataset (xarray.Dataset): The radar or SAR dataset.
-    - tile_size (int or dict): Size of each tile in meters. If an int, it represents the size along both dimensions.
-      If a dictionary, it should have keys 'line' and/or 'sample' indicating size along each dimension.
-    - resolution (str): Resolution of the dataset in meters.
-    - detrend (bool, optional): Make detrend image. Default to True.
+    Args:
+        dataset (xr.Dataset): The radar or SAR dataset.
+        tile_size (int or dict): Size of each tile in meters. If int, represents size along both dimensions.
+            If dict, should have keys 'line' and/or 'sample' indicating size along each dimension.
+        resolution (str): Resolution of the dataset in meters.
+        detrend (bool, optional): Whether to detrend the image. Defaults to True.
+        to_keep_var (list, optional): Variables to keep in the dataset. Defaults to None.
 
     Returns:
-    - dataset (xarray.Dataset): The normalized radar or SAR dataset.
-    - nperseg (int or dict): Number of pixels per segment for tiling. If an int, it represents the number of pixels
-      along both dimensions. If a dictionary, it has keys 'line' and/or 'sample' indicating the number of pixels
-      per segment along each dimension.
+        The normalized radar or SAR dataset.
+        Number of pixels per segment for tiling (int or dict with 'line' and 'sample' keys).
     """
-    if resolution is not None:
-        resolution_value = int(resolution.split('m')[0])
+    default_vars = ['longitude', 'latitude']
+    if to_keep_var:
+        to_keep_var.extend(default_vars)
     else:
-        resolution_value = 1
+        to_keep_var = ['sigma0', 'land_mask', 'ground_heading', 'incidence', 'nesz']
+        to_keep_var.extend(default_vars)
+
+    resolution_value = int(resolution.split('m')[0]) if resolution else 1
+
     if isinstance(tile_size, dict):
         tile_line_size = tile_size.get('line', 1)
         tile_sample_size = tile_size.get('sample', 1)
@@ -86,44 +113,52 @@ def tile_normalize(dataset, tile_size, resolution, detrend=True):
     if 'platform_heading' in dataset.attrs:
         dataset.attrs['platform_heading(degree)'] = dataset.attrs['platform_heading']
 
-    to_keep_list = ['sigma0', 'land_mask', 'ground_heading', 'longitude', 'latitude', 'incidence',
-                    'nesz']
-
     if detrend:
         dataset['sigma0_no_nan'] = xr.where(dataset['land_mask'], np.nan, dataset['sigma0'])
         dataset['sigma0_detrend'] = sigma0_detrend(dataset['sigma0_no_nan'], dataset['incidence'], line=10)
-        to_keep_list.append('sigma0_detrend')
+        to_keep_var.append('sigma0_detrend')
 
     if 'longitude' in dataset.variables and 'latitude' in dataset.variables:
         dataset['sigma0'] = dataset['sigma0'].transpose(*dataset['sigma0'].dims)
 
-    dataset = dataset.drop_vars(set(dataset.data_vars) - set(to_keep_list))
+    dataset = dataset.drop_vars(set(dataset.data_vars) - set(to_keep_var))
 
-    attributes_to_remove = {'name', 'multidataset', 'product', 'pols', 'footprint',
-                            'platform_heading'}
+    attributes_to_remove = {'name', 'multidataset', 'product', 'pols', 'footprint', 'platform_heading'}
     dataset.attrs = {key: value for key, value in dataset.attrs.items() if key not in attributes_to_remove}
 
     if 'spatial_ref' in dataset.coords and 'gcps' in dataset.spatial_ref.attrs:
         dataset.spatial_ref.attrs.pop('gcps')
+
     return dataset, nperseg
 
 
 # Function to generate tiles from SAR dataset
-def tiling(dataset, tile_size, noverlap, centering, side):
+def tiling(
+    dataset,
+    tile_size,
+    noverlap,
+    centering,
+    side
+):
     """
     Generates tiles from a radar or SAR (Synthetic Aperture Radar) dataset.
 
-    Parameters:
-    - dataset (xarray.Dataset): The radar or SAR dataset.
-    - subset_size (tuple or dict): Size of each tile in pixels. If a tuple, it represents (height, width) of the tile.
-      If a dictionary, it should have keys 'line' and/or 'sample' indicating size along each dimension.
-    - noverlap (int or dict): Number of pixels to overlap between adjacent tiles. If an int, it's applied to both
-      dimensions. If a dictionary, it should have keys 'line' and/or 'sample' indicating overlap along each dimension.
-    - centering (bool): If True, centers the tiles within the dataset.
-    - side (str): Side of the dataset from which tiling starts. Possible values: 'left' or 'right'.
+    Args:
+        dataset (xr.Dataset): The radar or SAR dataset.
+        tile_size (int or dict): Size of each tile in pixels (height, width).
+            If int, it represents the height and the width of the tile.
+            If dict, it should have keys 'line' and 'sample' indicating size along each dimension.
+        noverlap (int or dict): Number of pixels to overlap between adjacent tiles.
+            If int, it's applied to both dimensions.
+            If dict, it should have keys 'line' and 'sample' indicating overlap along each dimension.
+        centering (bool): If True, centers the tiles within the dataset.
+        side (str): Side of the dataset from which tiling starts. Must be 'left' or 'right'.
 
     Returns:
-    - all_tiles (xarray.Dataset): A concatenated xarray dataset containing all generated tiles.
+        xr.Dataset: A concatenated xarray dataset containing all generated tiles.
+
+    Raises:
+        ValueError: If noverlap is greater than or equal to tile size, or if no tiles are generated.
     """
     tiles = []
     tile_line_size, tile_sample_size = (tile_size.get('line', 1), tile_size.get('sample', 1)) \
@@ -177,22 +212,35 @@ def tiling(dataset, tile_size, noverlap, centering, side):
 
 
 # Function to tile a radar or SAR dataset around specified points
-def tiling_by_point(path, posting_loc, tile_size, resolution=None, detrend=True, save=False, save_dir='.'):
+def tiling_by_point(
+    path,
+    posting_loc,
+    tile_size,
+    resolution=None,
+    detrend=True,
+    save=False,
+    save_dir='.',
+    to_keep_var=None
+):
     """
     Tiles a radar or SAR dataset around specified points.
 
-    Parameters:
-    - path (str): Path to the radar or SAR dataset.
-    - posting_loc (list): List of points (geopandas GeoSeries) around which to tile the dataset.
-    - tile_size (int): Size of the box (in meters) to be tiled around each point.
-    - resolution (float, optional): Resolution of the dataset. Defaults to None.
-    - detrend (bool, optional): Make detrend image. Default to True.
-    - save (bool, optional): If True, saves the tiled dataset. Defaults to False.
-    - save_dir (str, optional): Directory where the tiled dataset should be saved. Defaults to '.' (current directory).
+    Args:
+        path (str): Path to the radar or SAR dataset.
+        posting_loc (list): Points around which to tile the dataset.
+        tile_size (int): Size of the box (in meters) to be tiled around each point.
+        resolution (str, optional): Resolution of the dataset. Defaults to None.
+        detrend (bool, optional): Make detrend image. Defaults to True.
+        save (bool, optional): If True, saves the tiled dataset. Defaults to False.
+        save_dir (str, optional): Directory where the tiled dataset should be saved. Defaults to current directory.
+        to_keep_var (list, optional): Variables to keep in the dataset. Defaults to None.
 
     Returns:
-    - dataset: The radar or SAR dataset.
-    - all_tiles (xarray.Dataset): A concatenated xarray dataset containing all generated tiles.
+        dataset: The radar or SAR dataset.
+        all_tiles (xarray.Dataset): A concatenated xarray dataset containing all generated tiles.
+
+    Raises:
+        ValueError: If the dataset type is unsupported or if an invalid posting location is provided.
     """
 
     logging.info('Start tiling...')
@@ -209,7 +257,7 @@ def tiling_by_point(path, posting_loc, tile_size, resolution=None, detrend=True,
 
     tiles = []
     dataset = sar_ds.dataset
-    dataset, _ = tile_normalize(dataset, tile_size, resolution, detrend)
+    dataset, _ = tile_normalize(dataset, tile_size, resolution, detrend, to_keep_var)
     for point in tqdm(posting_loc, desc='Tiling'):
         if point is None:
             raise ValueError(f"Invalid posting location: {posting_loc}")

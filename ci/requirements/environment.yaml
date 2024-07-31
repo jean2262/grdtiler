@@ -2,17 +2,13 @@ name: grdtiler-test
 channels:
   - conda-forge
 dependencies:
-    - numpy=1.26.4
+    - numpy
     - pytest
     - pytest-cov
-    - holoviews
-    - cartopy
     - tqdm
     - shapely
     - xsar
-    - xbatcher
     - xsarslc
-    - matplotlib
     - xarray-safe-s1
     - xradarsat2
     - xarray-safe-rcm
