@@ -4,43 +4,6 @@ import os
 import numpy as np
 import logging
 from datetime import datetime
-from xsarsea.windspeed.models import get_model
-
-
-# From xsarsea:
-def sigma0_detrend(sigma0, inc_angle, wind_speed_gmf=10., wind_dir_gmf=45., model='gmf_cmodifr2', line=10):
-    """
-    Detrend sigma0 using a given wind speed model.
-
-    Args:
-        sigma0 (xr.DataArray): Sigma0 data.
-        inc_angle (xr.DataArray): Incidence angle data.
-        wind_speed_gmf (float, optional): Wind speed for the GMF model. Defaults to 10.0.
-        wind_dir_gmf (float, optional): Wind direction for the GMF model. Defaults to 45.0.
-        model (str, optional): GMF model to use. Defaults to 'gmf_cmodifr2'.
-        line (int, optional): Line to use for sampling. Defaults to 10.
-
-    Returns:
-        xr.DataArray: Detrended sigma0 data.
-
-    Raises:
-        ValueError: If the model is not recognized or if there's an error in detrending.
-    """
-    model = get_model(model)
-    try:
-        sigma0_gmf_sample = inc_angle.isel(line=line).map_blocks(
-            model, (wind_speed_gmf, wind_dir_gmf),
-            template=inc_angle.isel(line=line),
-            kwargs={'broadcast': True}
-        )
-    except AttributeError:
-        sigma0_gmf_sample = model(inc_angle.isel(line=line), wind_speed_gmf, wind_dir_gmf, broadcast=True)
-
-    gmf_ratio_sample = sigma0_gmf_sample / np.nanmean(sigma0_gmf_sample)
-    detrended = sigma0 / gmf_ratio_sample.broadcast_like(sigma0)
-    detrended.attrs['comment'] = f'detrended with model {model.name}'
-
-    return detrended
 
 
 def add_tiles_footprint(tiles):
