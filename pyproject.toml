@@ -34,7 +34,7 @@ bump-my-version = "*"
 # Testing tools
 pytest = "*"
 pytest-runner = "*"
-"git+https://github.com/umr-lops/xsar_slc" = { version = "latest" }
+"git+https://github.com/umr-lops/xsar_slc" = { git = "https://github.com/umr-lops/xsar_slc" }
 
 # Documentation tools
 sphinx = "*"
