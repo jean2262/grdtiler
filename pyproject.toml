@@ -22,7 +22,7 @@ xsarsea = "*"
 
 [tool.poetry.dev-dependencies]
 # Formatting and code quality tools
-black = { extras = ["jupyter"] }
+black = "*"
 flake8 = "*"
 codespell = "*"
 
