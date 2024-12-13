@@ -76,6 +76,11 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: "3.12"
+      
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-dev llvm clang
 
       - name: Install Poetry
         run: |
