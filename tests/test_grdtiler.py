@@ -16,7 +16,7 @@ def path_to_product_sample():
 
 def test_tile_comparison(path_to_product_sample):
     # Load xsarslc pregenerated tiles
-    xtiling_tiles = np.load("xtiling_tiles.npy", allow_pickle=True)
+    xtiling_tiles = np.load("tests/xtiling_tiles.npy", allow_pickle=True)
 
     # Generate tiles using tiling_prod
     ds_t, tiles_t = grdtiler.tiling_prod(path=path_to_product_sample, tile_size={'line': 17600, 'sample': 17600},
