@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "grdtiler"
-version = "0.1.0"
+version = "0.0.1"
 description = "A package for tiling GRD products"
 authors = ["jrenaud2262 <jrenaud495@gmail.com>"]
 license = "MIT License"
