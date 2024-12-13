@@ -8,7 +8,6 @@ dependencies:
     - tqdm
     - shapely
     - xsar
-    - xsarslc
     - xarray-safe-s1
     - xradarsat2
     - xarray-safe-rcm

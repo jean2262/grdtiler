@@ -1,9 +1,9 @@
 [tool.poetry]
 name = "grdtiler"
-version = "0.0.2"
+version = "0.0.3"
 description = "A package for tiling GRD products"
 authors = ["jrenaud2262 <jrenaud495@gmail.com>"]
-license = "MIT License"
+license = "MIT"
 readme = "README.md"
 
 [tool.poetry.dependencies]
@@ -14,7 +14,6 @@ pytest-cov = "*"
 tqdm = "*"
 shapely = "*"
 xsar = "*"
-xsarslc = "*"
 xarray-safe-s1 = "*"
 xradarsat2 = "*"
 xarray-safe-rcm = "*"
