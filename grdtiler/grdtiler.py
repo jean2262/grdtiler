@@ -6,7 +6,7 @@ import xarray as xr
 import xsar
 import xsarsea
 from shapely import Point
-from .tools import add_tiles_footprint, save_tile
+from grdtiler.tools import add_tiles_footprint, save_tile
 from tqdm import tqdm
 
 
