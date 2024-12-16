@@ -5,7 +5,7 @@ setup(
     version='0.0.3',
     description='A package for tilling GRD products',
     author='jean2262',
-    author_email='jrenaud495@gmail',
+    author_email='jrenaud495@gmail.com',
     packages=find_packages(),
     install_requires=[
         'numpy',
