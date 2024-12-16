@@ -28,7 +28,7 @@ def tiling_prod(
 
     Args:
         path (str): Path to the radar or SAR dataset.
-        tile_size (int or dict): Size of each tile in pixels (height, width).
+        tile_size (int or dict): Size of each tile in meters (height, width).
         resolution (str , optional): Resolution of the dataset. Defaults to None.
         detrend (bool, optional): Whether to detrend the image. Defaults to True.
         noverlap (int, optional): Number of pixels to overlap between adjacent tiles. Defaults to 0.
