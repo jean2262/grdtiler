@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='grdtiler',
-    version='0.0.2',
+    version='0.0.3',
     description='A package for tilling GRD products',
     author='jean2262',
     author_email='jrenaud495@gmail',
