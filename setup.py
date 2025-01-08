@@ -7,6 +7,8 @@ setup(
     description='A package for tilling GRD products',
     author='jean2262',
     author_email='jean-renaud.miadana@oceanscope.com',
+    long_description=open("README.md").read(),
+    long_description_content_type="text/markdown",
     packages=find_packages(),
     install_requires=[
         'numpy',

@@ -1,6 +1,6 @@
 package:
   name: grdtiler
-  version: {{ version }}
+  version: {{ environ.get('GIT_DESCRIBE_TAG', 0)}}
 
 source:
   git_url: https://github.com/jean2262/grdtiler.git
@@ -8,16 +8,16 @@ source:
 
 build:
   number: 1
-  script: python setup.py install
+  script: python -m pip install . --no-deps -vv
 
 requirements:
   build:
-    - python {{ python }}
+    - python >=3.10,<3.12
     - setuptools
     - setuptools_scm
     - pip
   host:
-    - python {{ python }}
+    - python >=3.10,<3.12
     - numpy
     - pytest
     - pytest-cov
@@ -30,7 +30,7 @@ requirements:
     - xarray-safe-rcm
     - xsarsea
   run:
-    - python {{ python }}
+    - python >=3.10,<3.12
     - numpy
     - pytest
     - pytest-cov
