@@ -1,0 +1,53 @@
+package:
+  name: grdtiler
+  version: {{ version }}
+
+source:
+  git_url: https://github.com/jean2262/grdtiler.git
+  git_rev: HEAD  
+
+build:
+  number: 1
+  script: python setup.py install
+
+requirements:
+  build:
+    - python {{ python }}
+    - setuptools
+    - setuptools_scm
+    - pip
+  host:
+    - python {{ python }}
+    - numpy
+    - pytest
+    - pytest-cov
+    - tqdm
+    - shapely
+    - xarray
+    - xsar
+    - xarray-safe-s1
+    - xradarsat2
+    - xarray-safe-rcm
+    - xsarsea
+  run:
+    - python {{ python }}
+    - numpy
+    - pytest
+    - pytest-cov
+    - tqdm
+    - shapely
+    - xarray
+    - xsar
+    - xarray-safe-s1
+    - xradarsat2
+    - xarray-safe-rcm
+    - xsarsea
+
+about:
+  home: https://github.com/jean2262/grdtiler.git
+  license: MIT
+  summary: "A package for tiling GRD products"
+
+extra:
+  recipe-maintainers:
+    - jean2262 

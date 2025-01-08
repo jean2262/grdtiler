@@ -6,8 +6,9 @@ import xarray as xr
 import xsar
 import xsarsea
 from shapely import Point
-from grdtiler.tools import add_tiles_footprint, save_tile
 from tqdm import tqdm
+
+from grdtiler.tools import add_tiles_footprint, save_tile
 
 
 # Function to tile SAR dataset
@@ -185,8 +186,8 @@ def tile_normalize(dataset, tile_size, resolution, detrend=True, to_keep_var=Non
         }
     )
 
-    if "platform_heading" in dataset.attrs:
-        dataset.attrs["platform_heading(degree)"] = dataset.attrs["platform_heading"]
+    # if "platform_heading" in dataset.attrs:
+    #     dataset.attrs["platform_heading(degree)"] = dataset.attrs["platform_heading"]
 
     if detrend:
         dataset["sigma0_no_nan"] = xr.where(
@@ -212,7 +213,10 @@ def tile_normalize(dataset, tile_size, resolution, detrend=True, to_keep_var=Non
         dataset["sigma0"] = dataset["sigma0"].transpose(*dataset["sigma0"].dims)
 
     dataset = dataset.drop_vars(set(dataset.data_vars) - set(to_keep_var))
-
+    
+    if "product_path" in dataset.attrs:
+        dataset.attrs["safe"] = os.path.basename(dataset.attrs["product_path"])
+        
     attributes_to_remove = {
         "name",
         "multidataset",
@@ -220,7 +224,12 @@ def tile_normalize(dataset, tile_size, resolution, detrend=True, to_keep_var=Non
         "pols",
         "footprint",
         "platform_heading",
+        "short_name",
+        "product_path",
+        "rawDataStartTime",
+        "approx_transform"
     }
+        
     dataset.attrs = {
         key: value
         for key, value in dataset.attrs.items()

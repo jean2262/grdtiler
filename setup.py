@@ -2,10 +2,11 @@ from setuptools import setup, find_packages
 
 setup(
     name='grdtiler',
-    version='0.0.3',
+    use_scm_version={'write_to': 'grdtiler/_version.py'},
+    setup_requires=['setuptools_scm'],
     description='A package for tilling GRD products',
     author='jean2262',
-    author_email='jrenaud495@gmail.com',
+    author_email='jean-renaud.miadana@oceanscope.com',
     packages=find_packages(),
     install_requires=[
         'numpy',

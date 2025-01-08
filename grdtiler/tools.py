@@ -1,40 +1,99 @@
 from tqdm import tqdm
 from shapely.geometry import Polygon
 import os
-import numpy as np
 import logging
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
+
+logger = logging.getLogger(__name__)
 
 
-def add_tiles_footprint(tiles):
+# def add_tiles_footprint(tiles):
+#     """
+#     Add footprint information to each tile in a list of tiles.
+
+#     Args:
+#         tiles (list): List of tile datasets.
+
+#     Returns:
+#         List[xr.Dataset]: List of tile datasets with footprint information added.
+
+#     Raises:
+#         ValueError: If the input is not a list or if any tile is missing required coordinates.
+#     """
+#     if not isinstance(tiles, list):
+#         raise ValueError("tiles must be a list of tiles data.")
+#     tiles_with_footprint = []
+#     for tile in tqdm(tiles, desc='Adding footprints'):
+#         footprint_dict = {}
+#         for ll in ['longitude', 'latitude']:
+#             footprint_dict[ll] = [
+#                 tile[ll].isel(tile_line=a, tile_sample=x).values for a, x in
+#                 [(0, 0), (0, -1), (-1, -1), (-1, 0)]
+#             ]
+#         corners = list(zip(footprint_dict['longitude'], footprint_dict['latitude']))
+#         tile_footprint = Polygon(corners)
+#         centroids = tile_footprint.centroid
+#         tiles_with_footprint.append(
+#             tile.assign(tile_footprint=str(tile_footprint), lon_centroid=centroids.x, lat_centroid=centroids.y))
+
+#     return tiles_with_footprint
+
+def process_single_tile(tile):
+    """Process a single tile to add footprint information."""
+    # Get corner coordinates using numpy operations instead of multiple isel calls
+    corners_idx = [(0, 0), (0, -1), (-1, -1), (-1, 0)]
+    
+    # Extract coordinates all at once
+    lons = tile['longitude'].values
+    lats = tile['latitude'].values
+    
+    # Get corners using direct numpy indexing
+    corner_coords = [
+        (lons[i, j], lats[i, j])
+        for i, j in corners_idx
+    ]
+    
+    # Create polygon and get centroid
+    tile_footprint = Polygon(corner_coords)
+    centroids = tile_footprint.centroid
+    
+    # Return new tile with added attributes
+    return tile.assign(
+        tile_footprint=str(tile_footprint),
+        lon_centroid=centroids.x,
+        lat_centroid=centroids.y
+    )
+
+def add_tiles_footprint(tiles, max_workers=None):
     """
     Add footprint information to each tile in a list of tiles.
-
+    
     Args:
         tiles (list): List of tile datasets.
-
+        max_workers (int, optional): Maximum number of worker threads.
+            Defaults to None (uses ThreadPoolExecutor default).
+    
     Returns:
         List[xr.Dataset]: List of tile datasets with footprint information added.
-
+    
     Raises:
         ValueError: If the input is not a list or if any tile is missing required coordinates.
     """
     if not isinstance(tiles, list):
         raise ValueError("tiles must be a list of tiles data.")
-    tiles_with_footprint = []
-    for tile in tqdm(tiles, desc='Adding footprints'):
-        footprint_dict = {}
-        for ll in ['longitude', 'latitude']:
-            footprint_dict[ll] = [
-                tile[ll].isel(tile_line=a, tile_sample=x).values for a, x in
-                [(0, 0), (0, -1), (-1, -1), (-1, 0)]
-            ]
-        corners = list(zip(footprint_dict['longitude'], footprint_dict['latitude']))
-        tile_footprint = Polygon(corners)
-        centroids = tile_footprint.centroid
-        tiles_with_footprint.append(
-            tile.assign(tile_footprint=str(tile_footprint), lon_centroid=centroids.x, lat_centroid=centroids.y))
-
+        
+    # Process tiles in parallel using ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Use tqdm to show progress while processing in parallel
+        tiles_with_footprint = list(
+            tqdm(
+                executor.map(process_single_tile, tiles),
+                total=len(tiles),
+                desc='Adding footprints'
+            )
+        )
+    
     return tiles_with_footprint
 
 
