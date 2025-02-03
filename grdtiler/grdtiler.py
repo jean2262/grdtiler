@@ -1,5 +1,6 @@
 import logging
 import os
+import yaml
 
 import numpy as np
 import xarray as xr
@@ -23,7 +24,9 @@ def tiling_prod(
     save=False,
     save_dir=".",
     to_keep_var=None,
+    config_file="./config.yml",
 ):
+
     """
     Tiles a radar or SAR dataset.
 
@@ -44,11 +47,11 @@ def tiling_prod(
         tiles: The tiled radar or SAR dataset.
 
     Raises:
-        ValueError: If the dataset type is not 'GRD', 'RS2', or 'RCM'.
+        ValueError: If the dataset type is not 'S1', 'RS2', or 'RCM'.
     """
     logging.info("Start tiling...")
 
-    supported_datasets = {"GRD", "RS2", "RCM"}
+    supported_datasets = {"S1", "RS2", "RCM"}
     dataset_type = next((dt for dt in supported_datasets if dt in path), None)
 
     if not dataset_type:
@@ -59,7 +62,7 @@ def tiling_prod(
     dataset = xsar.open_dataset(path, resolution)
 
     dataset, nperseg = tile_normalize(
-        dataset, tile_size, resolution, detrend, to_keep_var
+        path, dataset, tile_size, resolution, detrend, to_keep_var, config_file
     )
     tiles = tiling(
         dataset=dataset,
@@ -77,68 +80,39 @@ def tiling_prod(
     return dataset, tiles
 
 
-def make_detrend(path, resolution, save_dir="."):
-    """
-    Detrends a SAR dataset and saves the processed dataset to a NetCDF file.
+def load_gmf_model(path, config_file, dataset):
+    
+    with open(config_file, "r") as f:
+        config = yaml.safe_load(f)
+    file_name = os.path.basename(path)
+    if file_name.startswith("S1"):
+        mission = "S1"
+    elif file_name.startswith("RS2"):
+        mission = "RS2"
+    elif file_name.startswith("RCM"):
+        mission = "RCM"
+        
+    gmf_base_path = config["gmf_base_path"]
+    pol = dataset.pol.values[0]
 
-    Args:
-        path (str): Path to the SAR dataset.
-        resolution (str): Resolution of the dataset.
-        save_dir (str, optional): Directory where the processed dataset will be saved.
-            Defaults to the current directory.
+    if pol == "HH":
+        xsarsea.windspeed.register_nc_luts(gmf_base_path)
+        gmf_model = config['gmf_models'][mission]['GMF_HH_NAME']
+        
+    elif pol == "HV":
+        xsarsea.windspeed.register_nc_luts(gmf_base_path)
+        gmf_model = config['gmf_models'][mission]['GMF_HV_NAME']
+        
+    elif pol == "VV":
+        gmf_model = config['gmf_models'][mission]['GMF_VV_NAME']
+        
+    elif pol == "VH":
+        gmf_model = config['gmf_models'][mission]['GMF_VH_NAME']
 
-    Returns:
-        str: The original path if an error occurs during processing.
-
-    The function applies a sigma0 detrending process based on the polarization of the dataset.
-    For HH polarization, it uses the 'nc_lut_gmf_cmod7_Rlow_hh_zhang' model, and for VV polarization,
-    it uses the 'cmod5n' model. The function removes certain attributes from the dataset and
-    handles spatial reference attributes before saving the processed dataset as a NetCDF file.
-    """
-    try:
-        ds = xsar.open_dataset(path, resolution=resolution)
-
-        if "HH" in ds.pol.values:
-            nc_luts_path = xsar.get_test_file("nc_luts_reduce")
-            xsarsea.windspeed.register_nc_luts(nc_luts_path)
-            ds["sigma0_detrend"] = xsarsea.sigma0_detrend(
-                sigma0=ds.sigma0,
-                inc_angle=ds.incidence,
-                model="nc_lut_gmf_cmod7_Rlow_hh_zhang",
-            )
-        elif "VV" in ds.pol.values:
-            xsarsea.windspeed.gmfs.GmfModel.activate_gmfs_impl()
-            ds["sigma0_detrend"] = xsarsea.sigma0_detrend(
-                sigma0=ds.sigma0, inc_angle=ds.incidence, model="cmod5n"
-            )
-        attributes_to_remove = {
-            "name",
-            "multidataset",
-            "product",
-            "pols",
-            "platform_heading",
-        }
-        ds.attrs = {
-            key: value
-            for key, value in ds.attrs.items()
-            if key not in attributes_to_remove
-        }
-
-        if "spatial_ref" in ds.coords and "gcps" in ds.spatial_ref.attrs:
-            ds.spatial_ref.attrs.pop("gcps")
-
-        for attr in ["footprint", "specialHandlingRequired"]:
-            if attr in ds.attrs:
-                ds.attrs[attr] = str(ds.attrs[attr])
-        save_name = ds.safe.split(".SAFE")[0]
-        save_path = os.path.join(f"{save_dir}{ds.safe}")
-        os.makedirs(save_path, exist_ok=True)
-        ds.to_netcdf(f"{save_path}/{save_name}.nc")
-    except (TypeError, ValueError) as e:
-        return path
+    return gmf_model
 
 
-def tile_normalize(dataset, tile_size, resolution, detrend=True, to_keep_var=None):
+def tile_normalize(path, dataset, tile_size, resolution, detrend=True, to_keep_var=None, config_file="./config.yml"):
     """
     Normalize a radar or SAR dataset for tiling.
 
@@ -188,23 +162,17 @@ def tile_normalize(dataset, tile_size, resolution, detrend=True, to_keep_var=Non
 
     # if "platform_heading" in dataset.attrs:
     #     dataset.attrs["platform_heading(degree)"] = dataset.attrs["platform_heading"]
-
+    gmf_model = load_gmf_model(path, config_file, dataset)
+    
     if detrend:
         dataset["sigma0_no_nan"] = xr.where(
             dataset["land_mask"], np.nan, dataset["sigma0"]
         )
-        if "HH" in dataset.pol.values:
-            nc_luts_path = xsar.get_test_file("nc_luts_reduce")
-            xsarsea.windspeed.register_nc_luts(nc_luts_path)
-            dataset["sigma0_detrend"] = xsarsea.sigma0_detrend(
-                sigma0=dataset.sigma0,
-                inc_angle=dataset.incidence,
-                model="nc_lut_gmf_cmod7_Rlow_hh_zhang",
-            )
-        elif "VV" in dataset.pol.values:
-            xsarsea.windspeed.gmfs.GmfModel.activate_gmfs_impl()
-            dataset["sigma0_detrend"] = xsarsea.sigma0_detrend(
-                sigma0=dataset.sigma0, inc_angle=dataset.incidence, model="cmod5n"
+        
+        dataset["sigma0_detrend"] = xsarsea.sigma0_detrend(
+            sigma0=dataset.sigma0,
+            inc_angle=dataset.incidence,
+            model=gmf_model,
             )
 
         to_keep_var.append("sigma0_detrend")
@@ -358,6 +326,7 @@ def tiling_by_point(
     save_dir=".",
     to_keep_var=None,
     scat_info=None,
+    config_file="./config.yml",
 ):
     """
     Tiles a radar or SAR dataset around specified points.
@@ -397,7 +366,7 @@ def tiling_by_point(
     tiles = []
     dataset = sar_ds.dataset
     dataset, nperseg = tile_normalize(
-        dataset, tile_size, resolution, detrend, to_keep_var
+        path, dataset, tile_size, resolution, detrend, to_keep_var, config_file
     )
     for i, point in tqdm(enumerate(posting_loc), total=len(posting_loc), desc="Tiling"):
         if point is None:

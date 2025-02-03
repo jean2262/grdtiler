@@ -1,0 +1,19 @@
+gmf_base_path: "/home/datawork-cersat-public/cache/project/sarwing/GMFS/nc_luts"
+
+gmf_models:
+    S1:
+        GMF_VV_NAME: "gmf_cmod5n"
+        GMF_VH_NAME: "gmf_s1_v2"
+        GMF_HH_NAME: "nc_lut_gmf_cmod7_Rhigh_hh_zhangA"
+        GMF_HV_NAME: "nc_lut_gmf_cmod7_Rhigh_hh_zhangA"
+    RS2:
+        GMF_VV_NAME: "gmf_cmod5n"
+        GMF_VH_NAME: "gmf_rs2_v2"
+        GMF_HH_NAME: "nc_lut_gmf_cmod7_Rhigh_hh_zhangA"
+        GMF_HV_NAME: "nc_lut_gmf_cmod7_Rhigh_hh_zhangA"
+    RCM:
+        GMF_VV_NAME: "gmf_cmod5n"
+        GMF_VH_NAME: "gmf_rcm_noaa"
+        GMF_HH_NAME: "nc_lut_gmf_cmod7_Rhigh_hh_zhangA"
+        GMF_HV_NAME: "nc_lut_gmf_cmod7_Rhigh_hh_zhangA"
+

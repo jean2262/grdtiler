@@ -1,6 +1,31 @@
+[project]
+name = "grdtiler"
+description = "A package for tilling GRD products"
+authors = [{ name = "jean2262", email = "jean-renaud.miadana@ocean-scope.com" }]
+license = { text = "MIT" }
+readme = "README.md"
+dependencies = [
+    'numpy',
+    'pytest',
+    'pytest-cov',
+    'tqdm',
+    'shapely',
+    'xarray',
+    'xsar>=2024.12.3',
+    'xarray-safe-s1',
+    'xradarsat2',
+    'xarray-safe-rcm',
+    'xsarsea',
+]
+dynamic = ["version"]
+
+[tool.setuptools]
+packages = ["grdtiler"]
+
+[tool.setuptools_scm]
+write_to = "grdtiler/_version.py"
+fallback_version = "999"
+
 [build-system]
 requires = ["setuptools>=64.0", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
-
-[tool.setuptools_scm]
-fallback_version = "999"
