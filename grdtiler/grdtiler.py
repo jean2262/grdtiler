@@ -79,21 +79,35 @@ def tiling_prod(
 
     return dataset, tiles
 
+def load_gmf_model(filename, config_file, pol):
+    """
+    Load a GMF model according to the filename and polarisation.
 
-def load_gmf_model(path, config_file, dataset):
-    
+    Parameters
+    ----------
+    filename : str
+        The filename of the Sentinel-1 data.
+    config_file : str, optional
+        The path to the configuration file. Defaults to "./config.yaml".
+    pol : str
+        The polarisation of the data. One of "HH", "HV", "VV", "VH".
+
+    Returns
+    -------
+    gmf_model : str
+        The name of the GMF model to use.
+    """
     with open(config_file, "r") as f:
         config = yaml.safe_load(f)
-    file_name = os.path.basename(path)
-    if file_name.startswith("S1"):
+
+    if filename.startswith("S1"):
         mission = "S1"
-    elif file_name.startswith("RS2"):
+    elif filename.startswith("RS2"):
         mission = "RS2"
-    elif file_name.startswith("RCM"):
+    elif filename.startswith("RCM"):
         mission = "RCM"
         
     gmf_base_path = config["gmf_base_path"]
-    pol = dataset.pol.values[0]
 
     if pol == "HH":
         xsarsea.windspeed.register_nc_luts(gmf_base_path)
@@ -111,6 +125,11 @@ def load_gmf_model(path, config_file, dataset):
 
     return gmf_model
 
+def move_valid_line_to_zero(inc_angle):
+    for i in range(inc_angle.sizes['line']):
+        if not np.isnan(inc_angle.isel(line=i)).any():
+            return inc_angle.isel(line=slice(i, None)).assign_coords(line=np.arange(inc_angle.sizes['line'] - i))
+    raise ValueError("No valid line in incidence angle without NaNs.")
 
 def tile_normalize(path, dataset, tile_size, resolution, detrend=True, to_keep_var=None, config_file="./config.yml"):
     """
@@ -162,18 +181,22 @@ def tile_normalize(path, dataset, tile_size, resolution, detrend=True, to_keep_v
 
     # if "platform_heading" in dataset.attrs:
     #     dataset.attrs["platform_heading(degree)"] = dataset.attrs["platform_heading"]
-    gmf_model = load_gmf_model(path, config_file, dataset)
     
     if detrend:
         dataset["sigma0_no_nan"] = xr.where(
             dataset["land_mask"], np.nan, dataset["sigma0"]
         )
-        
-        dataset["sigma0_detrend"] = xsarsea.sigma0_detrend(
-            sigma0=dataset.sigma0,
-            inc_angle=dataset.incidence,
-            model=gmf_model,
-            )
+        filename = os.path.basename(path)
+        sigma0_detrends = []
+        for pol in dataset.pol.values:
+            gmf_model = load_gmf_model(filename=filename, config_file=config_file, pol=pol)
+            inc_angle_cleaned = move_valid_line_to_zero(dataset.sel(pol=pol).incidence)
+            sigma0_detrends.append(xsarsea.sigma0_detrend(
+                sigma0=dataset.sel(pol=pol).sigma0,
+                inc_angle=inc_angle_cleaned,
+                model=gmf_model,
+            ))
+        dataset["sigma0_detrend"] = xr.concat(sigma0_detrends, dim="pol")
 
         to_keep_var.append("sigma0_detrend")
 
@@ -326,7 +349,7 @@ def tiling_by_point(
     save_dir=".",
     to_keep_var=None,
     scat_info=None,
-    config_file="./config.yml",
+    config_file="/home1/datawork/jrmiadan/project/grdtiler/grdtiler/config.yaml",
 ):
     """
     Tiles a radar or SAR dataset around specified points.
@@ -416,6 +439,7 @@ def tiling_by_point(
             ):
                 print(f"Error on tile size {tile.sizes}, for {point}")
                 continue
+            
         tile = tile.assign(origin_point=str(point))
         if scat_info:
             tile = tile.assign(
@@ -456,3 +480,156 @@ def tiling_by_point(
             save_tile(all_tiles, save_dir)
 
         return dataset, all_tiles
+
+
+def tiling_wv(
+    path,
+    tile_size,
+    resolution=None,
+    detrend=True,
+    to_keep_var=None,
+    config_file="/home1/datawork/jrmiadan/project/grdtiler/grdtiler/config.yaml",
+):
+    """
+    Découpe une image Sentinel-1 en tuiles de taille spécifiée.
+
+    Paramètres :
+    -----------
+    path : str
+        Chemin du fichier Sentinel-1.
+    tile_size : int
+        Taille des tuiles (exprimée en pixels).
+    resolution : float, optionnel
+        Résolution de l'image (en mètres/pixel).
+    detrend : bool, optionnel
+        Si True, applique un dé-trend aux données.
+    to_keep_var : list, optionnel
+        Liste des variables à conserver.
+    config_file : str, optionnel
+        Chemin du fichier de configuration.
+
+    Retourne :
+    ---------
+    dataset : xarray.Dataset
+        Dataset original après traitement.
+    all_tiles : xarray.Dataset ou None
+        Ensemble des tuiles générées ou None si aucune tuile n'a été créée.
+    """
+
+    # Chargement des métadonnées et dataset xsar
+    if "WV" in path.split("/")[-1]:
+        s1meta = xsar.sentinel1_meta.Sentinel1Meta(path)
+        s1ds = xsar.sentinel1_dataset.Sentinel1Dataset(path, resolution=resolution)
+        s1ds.add_high_resolution_variables()
+        s1ds.apply_calibration_and_denoising()
+        dataset = s1ds.dataset
+    else:
+        raise ValueError("Le chemin du fichier ne semble pas correspondre à une image WV.")
+
+    # Normalisation et extraction du nombre de segments
+    dataset, nperseg = tile_normalize(
+        path, dataset, tile_size, resolution, detrend, to_keep_var, config_file
+    )
+
+    # Extraction du centre du footprint
+    point = dataset.main_footprint.centroid
+    lon, lat = point.x, point.y
+    point_geom = Point(lon, lat)
+
+    # Vérification si le point est bien dans le footprint
+    if not dataset.main_footprint.contains(point_geom):
+        print(f"Skipping point ({lon}, {lat}) as it is outside the footprint.")
+        return dataset, None
+
+    # Conversion coordonnées géographiques en indices
+    point_coords = s1ds.ll2coords(lon, lat)
+
+    # Calcul de la demi-dimension du tile en pixels
+    dist = {
+        "line": int(np.round(tile_size / (2 * s1meta.pixel_line_m))),
+        "sample": int(np.round(tile_size / (2 * s1meta.pixel_sample_m))),
+    }
+
+    # Sélection initiale du tile
+    tile = dataset.sel(
+        line=slice(
+            point_coords[0] - dist["line"], point_coords[0] + dist["line"] - 1
+        ),
+        sample=slice(
+            point_coords[1] - dist["sample"], point_coords[1] + dist["sample"] - 1
+        ),
+    )
+    print(f"Tile size: {tile.sizes['line']} x {tile.sizes['sample']}")
+    # Ajustement si la taille du tile est inférieure à nperseg
+    if tile.sizes["line"] < nperseg and tile.sizes["sample"] < nperseg:
+        tile = dataset.sel(
+            line=slice(
+                point_coords[0] - dist["line"] - 1, point_coords[0] + dist["line"] - 1
+            ),
+            sample=slice(
+                point_coords[1] - dist["sample"] - 1, point_coords[1] + dist["sample"] - 1
+            ),
+        )
+    
+    elif tile.sizes["line"] < nperseg and not tile.sizes["sample"] < nperseg:
+        tile = dataset.sel(
+            line=slice(
+                point_coords[0] - dist["line"] - 1, point_coords[0] + dist["line"] - 1
+            ),
+            sample=slice(
+                point_coords[1] - dist["sample"], point_coords[1] + dist["sample"] - 1
+            ),
+        )
+        
+    elif not tile.sizes["line"] < nperseg and tile.sizes["sample"] < nperseg:
+        tile = dataset.sel(
+            line=slice(
+                point_coords[0] - dist["line"], point_coords[0] + dist["line"] - 1
+            ),
+            sample=slice(
+                point_coords[1] - dist["sample"] - 1, point_coords[1] + dist["sample"] - 1
+            ),
+        )
+
+    # Vérification finale de la taille du tile
+    if isinstance(nperseg, int):
+        if tile.sizes["line"] != nperseg or tile.sizes["sample"] != nperseg:
+            print(f"Erreur : taille du tile incorrecte {tile.sizes} pour {point}")
+            return dataset, None
+    else:
+        if (
+            tile.sizes["line"] != nperseg["line"]
+            or tile.sizes["sample"] != nperseg["sample"]
+        ):
+            print(f"Erreur : taille du tile incorrecte {tile.sizes} pour {point}")
+            return dataset, None
+    safe_name = path.split("/")[-1]
+    # Ajout des métadonnées
+    tile = tile.assign(
+        origin_point=str(point),
+        origin_safe=str(safe_name)
+        )
+
+    # Création de la liste des tuiles
+    tiles = [
+        tile.drop_indexes(["line", "sample"]).rename_dims(
+            {"line": "tile_line", "sample": "tile_sample"}
+        )
+    ]
+
+    # Vérification finale avant concaténation
+    if not tiles:
+        print("Aucune tuile générée.")
+        return dataset, None
+
+    # Ajout des empreintes des tuiles et concaténation
+    tiles = add_tiles_footprint(tiles)
+    all_tiles = xr.concat(tiles, dim="tile")
+
+    # Ajout des attributs pour documentation
+    all_tiles["origin_point"].attrs["comment"] = "Point d'origine de l'entrée"
+    all_tiles["tile_footprint"].attrs["comment"] = "Empreinte de la tuile"
+    all_tiles["lon_centroid"].attrs["comment"] = "Longitude du centroïde de la tuile"
+    all_tiles["lat_centroid"].attrs["comment"] = "Latitude du centroïde de la tuile"
+
+    return dataset, all_tiles
