@@ -126,10 +126,16 @@ def load_gmf_model(filename, config_file, pol):
     return gmf_model
 
 def move_valid_line_to_zero(inc_angle):
-    for i in range(inc_angle.sizes['line']):
-        if not np.isnan(inc_angle.isel(line=i)).any():
-            return inc_angle.isel(line=slice(i, None)).assign_coords(line=np.arange(inc_angle.sizes['line'] - i))
-    raise ValueError("No valid line in incidence angle without NaNs.")
+    nan_mask = np.isnan(inc_angle.values)
+    nan_counts = nan_mask.sum(axis=tuple(range(1, nan_mask.ndim)))
+    valid_lines = np.where(nan_counts == 0)[0]
+    if valid_lines.size > 0:
+        first_valid_line = valid_lines[0]
+    else:
+        first_valid_line = np.argmin(nan_counts) 
+
+    sliced = inc_angle.isel(line=slice(first_valid_line, None))
+    return sliced.assign_coords(line=np.arange(sliced.sizes['line']))
 
 def tile_normalize(path, dataset, tile_size, resolution, detrend=True, to_keep_var=None, config_file="./config.yml"):
     """
@@ -209,7 +215,6 @@ def tile_normalize(path, dataset, tile_size, resolution, detrend=True, to_keep_v
         dataset.attrs["safe"] = os.path.basename(dataset.attrs["product_path"])
         
     attributes_to_remove = {
-        "name",
         "multidataset",
         "product",
         "pols",
