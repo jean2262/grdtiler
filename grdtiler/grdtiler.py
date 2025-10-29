@@ -6,10 +6,13 @@ import numpy as np
 import xarray as xr
 import xsar
 import xsarsea
-from shapely import Point
+from shapely import Point, Polygon, MultiPolygon
 from tqdm import tqdm
 
 from grdtiler.tools import add_tiles_footprint, save_tile
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 # Function to tile SAR dataset
@@ -24,7 +27,8 @@ def tiling_prod(
     save=False,
     save_dir=".",
     to_keep_var=None,
-    config_file="./config.yml",
+    add_footprint=True,
+    config_file="/home1/datawork/jrmiadan/project/grdtiler/grdtiler/config.yaml",
 ):
 
     """
@@ -49,7 +53,7 @@ def tiling_prod(
     Raises:
         ValueError: If the dataset type is not 'S1', 'RS2', or 'RCM'.
     """
-    logging.info("Start tiling...")
+    logger.info("Start tiling...")
 
     supported_datasets = {"S1", "RS2", "RCM"}
     dataset_type = next((dt for dt in supported_datasets if dt in path), None)
@@ -62,7 +66,7 @@ def tiling_prod(
     dataset = xsar.open_dataset(path, resolution)
 
     dataset, nperseg = tile_normalize(
-        path, dataset, tile_size, resolution, detrend, to_keep_var, config_file
+        path=path, dataset=dataset, tile_size=tile_size, resolution=resolution, noverlap=noverlap, detrend=detrend, to_keep_var=to_keep_var, config_file=config_file
     )
     tiles = tiling(
         dataset=dataset,
@@ -70,9 +74,10 @@ def tiling_prod(
         noverlap=noverlap,
         centering=centering,
         side=side,
+        add_footprint=add_footprint,
     )
 
-    logging.info("Done tiling...")
+    logger.info("Done tiling...")
 
     if save:
         save_tile(tiles, save_dir)
@@ -137,7 +142,7 @@ def move_valid_line_to_zero(inc_angle):
     sliced = inc_angle.isel(line=slice(first_valid_line, None))
     return sliced.assign_coords(line=np.arange(sliced.sizes['line']))
 
-def tile_normalize(path, dataset, tile_size, resolution, detrend=True, to_keep_var=None, config_file="./config.yml"):
+def tile_normalize(path, dataset, tile_size, resolution, noverlap=0, detrend=True, to_keep_var=None, config_file="./config.yml"):
     """
     Normalize a radar or SAR dataset for tiling.
 
@@ -154,7 +159,9 @@ def tile_normalize(path, dataset, tile_size, resolution, detrend=True, to_keep_v
         Number of pixels per segment for tiling (int or dict with 'line' and 'sample' keys).
     """
     default_vars = ["longitude", "latitude"]
-    if to_keep_var:
+    
+    # logger.info(f"to_keep_var: {to_keep_var}")
+    if to_keep_var is not None:
         to_keep_var.extend(default_vars)
     else:
         to_keep_var = ["sigma0", "land_mask", "ground_heading", "incidence", "nesz"]
@@ -179,6 +186,7 @@ def tile_normalize(path, dataset, tile_size, resolution, detrend=True, to_keep_v
     dataset.attrs.update(
         {
             "resolution": resolution,
+            "noverlap": f"{noverlap} pixels",
             "polarizations": dataset.attrs["pols"],
             "processing_level": dataset.attrs["product"],
             "main_footprint": dataset.attrs["footprint"],
@@ -238,7 +246,7 @@ def tile_normalize(path, dataset, tile_size, resolution, detrend=True, to_keep_v
     return dataset, nperseg
 
 
-def tiling(dataset, tile_size, noverlap, centering, side):
+def tiling(dataset, tile_size, noverlap, centering, side, add_footprint=True):
     """
     Generates tiles from a radar or SAR (Synthetic Aperture Radar) dataset.
 
@@ -329,17 +337,23 @@ def tiling(dataset, tile_size, noverlap, centering, side):
                     )
                 )
     if not tiles:
-        raise ValueError("No tiles")
-
-    tiles_with_footprint = add_tiles_footprint(tiles)
+        raise ValueError("No tiles generated")
+    
+    if add_footprint:
+        tiles_with_footprint = add_tiles_footprint(tiles)
+    else:
+        tiles_with_footprint = tiles
+    
     all_tiles = xr.concat(tiles_with_footprint, dim="tile")
-    all_tiles["tile_footprint"].attrs["comment"] = "Footprint of the tile"
-    all_tiles["lon_centroid"].attrs["comment"] = (
-        "Longitude of the tile footprint's centroid"
-    )
-    all_tiles["lat_centroid"].attrs["comment"] = (
-        "Latitude of the tile footprint's centroid"
-    )
+    
+    if add_footprint:
+        all_tiles["tile_footprint"].attrs["comment"] = "Footprint of the tile"
+        all_tiles["lon_centroid"].attrs["comment"] = (
+            "Longitude of the tile footprint's centroid"
+        )
+        all_tiles["lat_centroid"].attrs["comment"] = (
+            "Latitude of the tile footprint's centroid"
+        )
 
     return all_tiles
 
@@ -377,7 +391,7 @@ def tiling_by_point(
         ValueError: If the dataset type is unsupported or if an invalid posting location is provided.
     """
 
-    logging.info("Start tiling...")
+    logger.info("Start tiling...")
 
     if "GRD" in path and "RS2" not in path and "RCM" not in path:
         sar_dm = xsar.Sentinel1Meta(path)
@@ -394,7 +408,7 @@ def tiling_by_point(
     tiles = []
     dataset = sar_ds.dataset
     dataset, nperseg = tile_normalize(
-        path, dataset, tile_size, resolution, detrend, to_keep_var, config_file
+        path=path, dataset=dataset, tile_size=tile_size, resolution=resolution, detrend=detrend, to_keep_var=to_keep_var, config_file=config_file
     )
     for i, point in tqdm(enumerate(posting_loc), total=len(posting_loc), desc="Tiling"):
         if point is None:
@@ -424,13 +438,54 @@ def tiling_by_point(
                 "sample": int(np.round(tile_size / 2 / dataset.pixel_sample_m)),
             }
 
+        # tile = dataset.sel(
+        #    line=slice(
+        #        point_coords[0] - dist["line"], point_coords[0] + dist["line"] - 1
+        #    ),
+        #    sample=slice(
+        #        point_coords[1] - dist["sample"], point_coords[1] + dist["sample"] - 1
+        #    ),
+        # )
+        
+        line_start = point_coords[0] - dist["line"]
+        line_end = point_coords[0] + dist["line"]
+        sample_start = point_coords[1] - dist["sample"]
+        sample_end = point_coords[1] + dist["sample"]
+        
         tile = dataset.sel(
-            line=slice(
-                point_coords[0] - dist["line"], point_coords[0] + dist["line"] - 1
-            ),
-            sample=slice(
-                point_coords[1] - dist["sample"], point_coords[1] + dist["sample"] - 1
-            ),
+            line=slice(line_start, line_end),
+            sample=slice(sample_start, sample_end),
+        )
+        
+        expected_line = nperseg if isinstance(nperseg, int) else nperseg["line"]
+        expected_sample = nperseg if isinstance(nperseg, int) else nperseg["sample"]
+        
+        # Get coordinate spacing (assuming it's uniform)
+        line_coords = dataset["line"].values
+        sample_coords = dataset["sample"].values
+        line_step = abs(line_coords[1] - line_coords[0])
+        sample_step = abs(sample_coords[1] - sample_coords[0])
+        
+        # Adjust for off-by-one differences
+        actual_line = tile.sizes["line"]
+        actual_sample = tile.sizes["sample"]
+        
+        if abs(actual_line - expected_line) == 1:
+            if actual_line < expected_line:
+                line_end += line_step  # extend by one pixel equivalent
+            else:
+                line_end -= line_step  # reduce by one pixel equivalent
+        
+        if abs(actual_sample - expected_sample) == 1:
+            if actual_sample < expected_sample:
+                sample_end += sample_step
+            else:
+                sample_end -= sample_step
+        
+        # Re-select with corrected bounds
+        tile = dataset.sel(
+            line=slice(line_start, line_end),
+            sample=slice(sample_start, sample_end),
         )
 
         if isinstance(nperseg, int):
@@ -457,7 +512,7 @@ def tiling_by_point(
             )
         )
 
-    logging.info("Done tiling...")
+    logger.info("Done tiling...")
 
     if len(tiles) == 0:
         print("no tiles")
@@ -486,6 +541,32 @@ def tiling_by_point(
 
         return dataset, all_tiles
 
+def crosses_antimeridian(polygon, threshold=150):
+    if isinstance(polygon, MultiPolygon):
+        polygon = polygon.geoms[0].union(polygon.geoms[1])
+    coords = list(polygon.exterior.coords)
+
+    for i in range(len(coords) - 1):
+        lon1, lat1 = coords[i]
+        lon2, lat2 = coords[i + 1]
+        
+        if (lon1 > threshold and lon2 < -threshold) or (lon1 < -threshold and lon2 > threshold):
+            # Only return True if there is an actual crossing
+            if abs(lon1 - lon2) > 180:
+                return True
+    return False
+
+def normalize_longitudes_to_360(polygon):
+    try:
+        normalized_coords = [
+            ((lon + 360) if lon < 0 else lon, lat) 
+            for lon, lat in polygon.exterior.coords
+        ]
+        return Polygon(normalized_coords)
+    except Exception as e:
+        logger.error(f"Error normalizing longitudes: {e}")
+        return None
+
 
 def tiling_wv(
     path,
@@ -495,33 +576,22 @@ def tiling_wv(
     to_keep_var=None,
     config_file="/home1/datawork/jrmiadan/project/grdtiler/grdtiler/config.yaml",
 ):
+    """_summary_
+
+    Args:
+        path (_type_): _description_
+        tile_size (_type_): _description_
+        resolution (_type_, optional): _description_. Defaults to None.
+        detrend (bool, optional): _description_. Defaults to True.
+        to_keep_var (_type_, optional): _description_. Defaults to None.
+        config_file (str, optional): _description_. Defaults to "/home1/datawork/jrmiadan/project/grdtiler/grdtiler/config.yaml".
+
+    Raises:
+        ValueError: _description_
+
+    Returns:
+        _type_: _description_
     """
-    Découpe une image Sentinel-1 en tuiles de taille spécifiée.
-
-    Paramètres :
-    -----------
-    path : str
-        Chemin du fichier Sentinel-1.
-    tile_size : int
-        Taille des tuiles (exprimée en pixels).
-    resolution : float, optionnel
-        Résolution de l'image (en mètres/pixel).
-    detrend : bool, optionnel
-        Si True, applique un dé-trend aux données.
-    to_keep_var : list, optionnel
-        Liste des variables à conserver.
-    config_file : str, optionnel
-        Chemin du fichier de configuration.
-
-    Retourne :
-    ---------
-    dataset : xarray.Dataset
-        Dataset original après traitement.
-    all_tiles : xarray.Dataset ou None
-        Ensemble des tuiles générées ou None si aucune tuile n'a été créée.
-    """
-
-    # Chargement des métadonnées et dataset xsar
     if "WV" in path.split("/")[-1]:
         s1meta = xsar.sentinel1_meta.Sentinel1Meta(path)
         s1ds = xsar.sentinel1_dataset.Sentinel1Dataset(path, resolution=resolution)
@@ -529,109 +599,114 @@ def tiling_wv(
         s1ds.apply_calibration_and_denoising()
         dataset = s1ds.dataset
     else:
-        raise ValueError("Le chemin du fichier ne semble pas correspondre à une image WV.")
+        raise ValueError("Path must be a Sentinel-1 WV path.")
 
-    # Normalisation et extraction du nombre de segments
     dataset, nperseg = tile_normalize(
-        path, dataset, tile_size, resolution, detrend, to_keep_var, config_file
+        path=path, dataset=dataset, tile_size=tile_size, resolution=resolution, detrend=detrend, to_keep_var=to_keep_var, config_file=config_file
     )
-
-    # Extraction du centre du footprint
-    point = dataset.main_footprint.centroid
-    lon, lat = point.x, point.y
-    point_geom = Point(lon, lat)
-
-    # Vérification si le point est bien dans le footprint
-    if not dataset.main_footprint.contains(point_geom):
-        print(f"Skipping point ({lon}, {lat}) as it is outside the footprint.")
-        return dataset, None
-
-    # Conversion coordonnées géographiques en indices
-    point_coords = s1ds.ll2coords(lon, lat)
-
-    # Calcul de la demi-dimension du tile en pixels
-    dist = {
-        "line": int(np.round(tile_size / (2 * s1meta.pixel_line_m))),
-        "sample": int(np.round(tile_size / (2 * s1meta.pixel_sample_m))),
-    }
-
-    # Sélection initiale du tile
-    tile = dataset.sel(
-        line=slice(
-            point_coords[0] - dist["line"], point_coords[0] + dist["line"] - 1
-        ),
-        sample=slice(
-            point_coords[1] - dist["sample"], point_coords[1] + dist["sample"] - 1
-        ),
-    )
-    print(f"Tile size: {tile.sizes['line']} x {tile.sizes['sample']}")
-    # Ajustement si la taille du tile est inférieure à nperseg
-    if tile.sizes["line"] < nperseg and tile.sizes["sample"] < nperseg:
-        tile = dataset.sel(
-            line=slice(
-                point_coords[0] - dist["line"] - 1, point_coords[0] + dist["line"] - 1
-            ),
-            sample=slice(
-                point_coords[1] - dist["sample"] - 1, point_coords[1] + dist["sample"] - 1
-            ),
-        )
+    is_cross_antimeridian = crosses_antimeridian(dataset.main_footprint)
     
-    elif tile.sizes["line"] < nperseg and not tile.sizes["sample"] < nperseg:
+    if is_cross_antimeridian:
+        correct_footprint = normalize_longitudes_to_360(dataset.main_footprint)
+        point = correct_footprint.centroid
+        if correct_footprint is None:
+            logger.warning("Unable to normalize longitudes to 360 degrees.")
+            return dataset, None
+        
+        line_mid = dataset.sizes["line"] // 2
+        sample_mid = dataset.sizes["sample"] // 2
+
+        tile = dataset.isel(
+            line=slice(line_mid - (nperseg // 2), line_mid + (nperseg // 2)),
+            sample=slice(sample_mid - (nperseg // 2), sample_mid + (nperseg // 2))
+        )
+    else:
+        point = dataset.main_footprint.centroid
+        lon, lat = point.x, point.y
+        point_geom = Point(lon, lat)
+
+        if not dataset.main_footprint.contains(point_geom):
+            logger.warning(f"Skipping point ({lon}, {lat}) as it is outside the footprint.")
+            return dataset, None
+
+        point_coords = s1ds.ll2coords(lon, lat)
+
+        dist = {
+            "line": int(np.round(tile_size / (2 * s1meta.pixel_line_m))),
+            "sample": int(np.round(tile_size / (2 * s1meta.pixel_sample_m))),
+        }
+
         tile = dataset.sel(
             line=slice(
-                point_coords[0] - dist["line"] - 1, point_coords[0] + dist["line"] - 1
+                point_coords[0] - dist["line"], point_coords[0] + dist["line"] - 1
             ),
             sample=slice(
                 point_coords[1] - dist["sample"], point_coords[1] + dist["sample"] - 1
             ),
         )
         
-    elif not tile.sizes["line"] < nperseg and tile.sizes["sample"] < nperseg:
-        tile = dataset.sel(
-            line=slice(
-                point_coords[0] - dist["line"], point_coords[0] + dist["line"] - 1
-            ),
-            sample=slice(
-                point_coords[1] - dist["sample"] - 1, point_coords[1] + dist["sample"] - 1
-            ),
-        )
+        # Ajuste if tile is too small
+        if tile.sizes["line"] < nperseg and tile.sizes["sample"] < nperseg:
+            tile = dataset.sel(
+                line=slice(
+                    point_coords[0] - dist["line"] - 1, point_coords[0] + dist["line"] - 1
+                ),
+                sample=slice(
+                    point_coords[1] - dist["sample"] - 1, point_coords[1] + dist["sample"] - 1
+                ),
+            )
+        
+        elif tile.sizes["line"] < nperseg and not tile.sizes["sample"] < nperseg:
+            tile = dataset.sel(
+                line=slice(
+                    point_coords[0] - dist["line"] - 1, point_coords[0] + dist["line"] - 1
+                ),
+                sample=slice(
+                    point_coords[1] - dist["sample"], point_coords[1] + dist["sample"] - 1
+                ),
+            )
+            
+        elif not tile.sizes["line"] < nperseg and tile.sizes["sample"] < nperseg:
+            tile = dataset.sel(
+                line=slice(
+                    point_coords[0] - dist["line"], point_coords[0] + dist["line"] - 1
+                ),
+                sample=slice(
+                    point_coords[1] - dist["sample"] - 1, point_coords[1] + dist["sample"] - 1
+                ),
+            )
 
-    # Vérification finale de la taille du tile
     if isinstance(nperseg, int):
         if tile.sizes["line"] != nperseg or tile.sizes["sample"] != nperseg:
-            print(f"Erreur : taille du tile incorrecte {tile.sizes} pour {point}")
+            logger.error(f"Incorect tile size {tile.sizes} for {point}")
             return dataset, None
     else:
         if (
             tile.sizes["line"] != nperseg["line"]
             or tile.sizes["sample"] != nperseg["sample"]
         ):
-            print(f"Erreur : taille du tile incorrecte {tile.sizes} pour {point}")
+            logger.error(f"Incorect tile size {tile.sizes} for {point}")
             return dataset, None
     safe_name = path.split("/")[-1]
-    # Ajout des métadonnées
+
     tile = tile.assign(
         origin_point=str(point),
         origin_safe=str(safe_name)
         )
 
-    # Création de la liste des tuiles
     tiles = [
         tile.drop_indexes(["line", "sample"]).rename_dims(
             {"line": "tile_line", "sample": "tile_sample"}
         )
     ]
 
-    # Vérification finale avant concaténation
     if not tiles:
-        print("Aucune tuile générée.")
+        logger.warning("No tiles generated")
         return dataset, None
 
-    # Ajout des empreintes des tuiles et concaténation
     tiles = add_tiles_footprint(tiles)
     all_tiles = xr.concat(tiles, dim="tile")
-
-    # Ajout des attributs pour documentation
+    
     all_tiles["origin_point"].attrs["comment"] = "Point d'origine de l'entrée"
     all_tiles["tile_footprint"].attrs["comment"] = "Empreinte de la tuile"
     all_tiles["lon_centroid"].attrs["comment"] = "Longitude du centroïde de la tuile"

@@ -16,10 +16,10 @@ This repository contains Python functions to process, normalize, and tile Synthe
 
 ## Installation
 
-Install the grdtiler using pip:
+Install the grdtiler using conda:
 
 ```bash
-pip install grdtiler
+conda install grdtiler
 ```
 
 Or clone the repository and install dependencies manually:
@@ -46,7 +46,7 @@ To use this toolkit, install the following dependencies:
 Install these dependencies using:
 
 ```bash
-pip install numpy xarray xsar xsarsea shapely tqdm
+conda install numpy xarray xsar xsarsea shapely tqdm
 ```
 
 ---

@@ -94,6 +94,7 @@ cmake-build-*/
 
 # File-based project format
 *.iws
+grdtiler/config_myuse.yaml
 
 # IntelliJ
 out/
