@@ -1,43 +1,43 @@
 name: Release
-
 on:
   push:
     tags:
-      - "v*"  # Trigger only on tag pushes
+      - "v*"
 
 jobs:
   build-and-upload:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}   
 
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Set GIT_DESCRIBE_TAG
-        run: |
-          echo "GIT_DESCRIBE_TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
-
-      - name: Setup micromamba
+      - name: Set up micromamba
         uses: mamba-org/setup-micromamba@v1
         with:
           environment-name: build-env
-          create-args: >
+          create-args: >-
             python=3.11
             conda-build
             anaconda-client
             setuptools_scm
           cache-environment: true
+          init-shell: bash   
 
       - name: Build package
         run: |
-          micromamba run -n build-env conda build recipe/ --output-folder ./conda-bld
+          export GIT_DESCRIBE_TAG=${GITHUB_REF#refs/tags/}
+          conda build recipe/
 
       - name: Upload to Anaconda
         env:
           ANACONDA_API_TOKEN: ${{ secrets.ANACONDA_API_TOKEN }}
         run: |
-          # Find built package
-          PACKAGE=$(ls ./conda-bld/noarch/grdtiler-*.tar.bz2)
-          echo "Uploading $PACKAGE..."
-          micromamba run -n build-env anaconda upload --token $ANACONDA_API_TOKEN $PACKAGE
+          anaconda upload \
+            --token $ANACONDA_API_TOKEN \
+            --user Oceanscope \
+            $(conda build recipe/ --output)
