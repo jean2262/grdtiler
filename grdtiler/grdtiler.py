@@ -265,6 +265,7 @@ def tile_normalize(dataset, tile_size, resolution, noverlap=0, detrend=True, to_
     if "spatial_ref" in dataset.coords and "gcps" in dataset.spatial_ref.attrs:
         dataset.spatial_ref.attrs.pop("gcps")
 
+    dataset = dataset.load()
     return dataset, nperseg
 
 
