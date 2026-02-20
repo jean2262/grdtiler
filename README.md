@@ -19,7 +19,7 @@ This repository contains Python functions to process, normalize, and tile Synthe
 Install the grdtiler using conda:
 
 ```bash
-conda install grdtiler
+conda install grdtiler -c oceanscope
 ```
 
 Or clone the repository and install dependencies manually:
@@ -27,26 +27,6 @@ Or clone the repository and install dependencies manually:
 ```bash
 git clone https://github.com/jean2262/grdtiler.git
 cd grdtiler
-```
-
----
-
-## Requirements
-
-To use this toolkit, install the following dependencies:
-
-- `numpy`
-- `xarray`
-- `xsar`
-- `xsarsea`
-- `shapely`
-- `tqdm`
-- `logging`
-
-Install these dependencies using:
-
-```bash
-conda install numpy xarray xsar xsarsea shapely tqdm
 ```
 
 ---
@@ -137,17 +117,6 @@ Generates tiles centered around specified geographic points.
 
 **Returns:**
 - Processed dataset and point-centered tiles.
-
----
-
-## Logging
-
-This toolkit uses Python's logging module for detailed progress information. To enable logging:
-
-```python
-import logging
-logging.basicConfig(level=logging.INFO)
-```
 
 ---
 
