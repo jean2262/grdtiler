@@ -1,5 +1,4 @@
 import logging
-import os
 import yaml
 
 import numpy as np
@@ -7,17 +6,25 @@ import xarray as xr
 import xsar
 import xsarsea
 from shapely import Point, Polygon, MultiPolygon
+from shapely import wkt
 from tqdm import tqdm
+from pathlib import Path
 
 from grdtiler.tools import add_tiles_footprint, save_tile
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+PIXELSPACING = {
+    "S1_IW_GRDH": 10,
+    "S1_IW_GRDM": 40,
+    "S1_EW_GRDH": 40,
+    "S1_EW_GRDV": 40,
+}
 
 # Function to tile SAR dataset
 def tiling_prod(
-    path,
+    path: str|xr.Dataset,
     tile_size,
     resolution=None,
     detrend=True,
@@ -28,7 +35,7 @@ def tiling_prod(
     save_dir=".",
     to_keep_var=None,
     add_footprint=True,
-    config_file="/home1/datawork/jrmiadan/project/grdtiler/grdtiler/config.yaml",
+    config_file="config.yaml",
 ):
 
     """
@@ -53,20 +60,12 @@ def tiling_prod(
     Raises:
         ValueError: If the dataset type is not 'S1', 'RS2', or 'RCM'.
     """
+
+    dataset = load_dataset(path, resolution=resolution)
     logger.info("Start tiling...")
 
-    supported_datasets = {"S1", "RS2", "RCM"}
-    dataset_type = next((dt for dt in supported_datasets if dt in path), None)
-
-    if not dataset_type:
-        raise ValueError(
-            f"Unsupported dataset type. Supported types are: {', '.join(supported_datasets)}"
-        )
-
-    dataset = xsar.open_dataset(path, resolution)
-
     dataset, nperseg = tile_normalize(
-        path=path, dataset=dataset, tile_size=tile_size, resolution=resolution, noverlap=noverlap, detrend=detrend, to_keep_var=to_keep_var, config_file=config_file
+        dataset=dataset, tile_size=tile_size, resolution=resolution, noverlap=noverlap, detrend=detrend, to_keep_var=to_keep_var, config_file=config_file
     )
     tiles = tiling(
         dataset=dataset,
@@ -83,6 +82,26 @@ def tiling_prod(
         save_tile(tiles, save_dir)
 
     return dataset, tiles
+
+def load_dataset(path, resolution=None):
+    if isinstance(path, xr.Dataset):
+        dataset = path
+    else:
+        path_obj = Path(path)
+        
+        if path_obj.suffix.lower() == ".nc":
+            dataset = xr.open_dataset(path_obj)
+        else:
+            SUPPORTED_PREFIXES = ("S1", "RS2", "RCM")
+            if path_obj.name.startswith(SUPPORTED_PREFIXES):
+                dataset = xsar.open_dataset(str(path_obj), resolution=resolution)
+            else:
+                raise ValueError(
+                    f"Unsupported file or dataset type: {path}. "
+                    f"Expected a .nc file or a SAR product starting with {SUPPORTED_PREFIXES}."
+                )
+
+    return dataset
 
 def load_gmf_model(filename, config_file, pol):
     """
@@ -105,12 +124,14 @@ def load_gmf_model(filename, config_file, pol):
     with open(config_file, "r") as f:
         config = yaml.safe_load(f)
 
-    if filename.startswith("S1"):
+    if filename.upper().startswith("S1"):
         mission = "S1"
-    elif filename.startswith("RS2"):
+    elif filename.upper().startswith("RS2"):
         mission = "RS2"
-    elif filename.startswith("RCM"):
+    elif filename.upper().startswith("RCM"):
         mission = "RCM"
+    else:
+        raise ValueError("Only support S1, RCM and RS2")
         
     gmf_base_path = config["gmf_base_path"]
 
@@ -142,12 +163,11 @@ def move_valid_line_to_zero(inc_angle):
     sliced = inc_angle.isel(line=slice(first_valid_line, None))
     return sliced.assign_coords(line=np.arange(sliced.sizes['line']))
 
-def tile_normalize(path, dataset, tile_size, resolution, noverlap=0, detrend=True, to_keep_var=None, config_file="./config.yml"):
+def tile_normalize(dataset, tile_size, resolution, noverlap=0, detrend=True, to_keep_var=None, config_file="./config.yml"):
     """
     Normalize a radar or SAR dataset for tiling.
 
     Args:
-        dataset (xr.Dataset): The radar or SAR dataset.
         tile_size (int or dict): Size of each tile in meters. If int, represents size along both dimensions.
             If dict, should have keys 'line' and/or 'sample' indicating size along each dimension.
         resolution (str): Resolution of the dataset in meters.
@@ -164,7 +184,7 @@ def tile_normalize(path, dataset, tile_size, resolution, noverlap=0, detrend=Tru
     if to_keep_var is not None:
         to_keep_var.extend(default_vars)
     else:
-        to_keep_var = ["sigma0", "land_mask", "ground_heading", "incidence", "nesz"]
+        to_keep_var = ["digital_number", "sigma0", "land_mask", "ground_heading", "incidence", "nesz"]
         to_keep_var.extend(default_vars)
 
     resolution_value = int(resolution.split("m")[0]) if resolution else 1
@@ -200,7 +220,9 @@ def tile_normalize(path, dataset, tile_size, resolution, noverlap=0, detrend=Tru
         dataset["sigma0_no_nan"] = xr.where(
             dataset["land_mask"], np.nan, dataset["sigma0"]
         )
-        filename = os.path.basename(path)
+        filename = dataset.attrs["safe"] if "safe" in dataset.attrs else dataset.attrs["name"]
+        if ":" in filename:
+            filename = Path(filename.split(":")[1]).name
         sigma0_detrends = []
         for pol in dataset.pol.values:
             gmf_model = load_gmf_model(filename=filename, config_file=config_file, pol=pol)
@@ -220,7 +242,7 @@ def tile_normalize(path, dataset, tile_size, resolution, noverlap=0, detrend=Tru
     dataset = dataset.drop_vars(set(dataset.data_vars) - set(to_keep_var))
     
     if "product_path" in dataset.attrs:
-        dataset.attrs["safe"] = os.path.basename(dataset.attrs["product_path"])
+        dataset.attrs["safe"] = Path(dataset.attrs["product_path"]).name
         
     attributes_to_remove = {
         "multidataset",
@@ -357,6 +379,19 @@ def tiling(dataset, tile_size, noverlap, centering, side, add_footprint=True):
 
     return all_tiles
 
+def find_pixel(ds, lon0, lat0):
+
+    lon = ds.longitude.compute().values
+    lat = ds.latitude.compute().values
+
+    dist2 = (lon - lon0)**2 + (lat - lat0)**2
+
+    iy, ix = np.unravel_index(np.argmin(dist2), dist2.shape)
+
+    line = ds.line.values[iy]
+    sample = ds.sample.values[ix]
+
+    return (line, sample)
 
 def tiling_by_point(
     path,
@@ -368,7 +403,7 @@ def tiling_by_point(
     save_dir=".",
     to_keep_var=None,
     scat_info=None,
-    config_file="/home1/datawork/jrmiadan/project/grdtiler/grdtiler/config.yaml",
+    config_file="config.yaml",
 ):
     """
     Tiles a radar or SAR dataset around specified points.
@@ -390,62 +425,48 @@ def tiling_by_point(
     Raises:
         ValueError: If the dataset type is unsupported or if an invalid posting location is provided.
     """
-
+    dataset = load_dataset(path, resolution=resolution)
+    
     logger.info("Start tiling...")
-
-    if "GRD" in path and "RS2" not in path and "RCM" not in path:
-        sar_dm = xsar.Sentinel1Meta(path)
-        sar_ds = xsar.Sentinel1Dataset(sar_dm, resolution)
-    elif "RS2" in path:
-        sar_ds = xsar.RadarSat2Dataset(path, resolution)
-    elif "RCM" in path:
-        sar_ds = xsar.RcmDataset(path, resolution)
-    else:
-        raise ValueError(
-            "This function can only tile datasets with types 'GRD', 'RS2', 'RMC', or 'RCM3'."
-        )
-
+    
     tiles = []
-    dataset = sar_ds.dataset
+    filename = dataset.attrs["safe"] if "safe" in dataset.attrs else dataset.attrs["name"]
+    if ":" in filename:
+        filename = Path(filename.split(":")[1]).name
+    
+    fn = "_".join([filename[:2]] + filename.split("_")[1:3])
+    footprint = dataset.attrs["footprint"]
+    footprint = wkt.loads(footprint) if isinstance(footprint, str) else footprint
     dataset, nperseg = tile_normalize(
-        path=path, dataset=dataset, tile_size=tile_size, resolution=resolution, detrend=detrend, to_keep_var=to_keep_var, config_file=config_file
+        dataset=dataset, tile_size=tile_size, resolution=resolution, detrend=detrend, to_keep_var=to_keep_var, config_file=config_file
     )
     for i, point in tqdm(enumerate(posting_loc), total=len(posting_loc), desc="Tiling"):
         if point is None:
             raise ValueError(f"Invalid posting location: {posting_loc}")
 
-        lon, lat = point.x, point.y
-        point_geom = Point(lon, lat)
-        if not sar_ds.footprint.contains(point_geom):
-            print(f"Skipping point ({lon}, {lat}) as it is outside the footprint.")
+
+        if not footprint.contains(point):
+            logging.warning(f"Skipping {point} as it is outside the footprint.")
             continue
-        point_coords = sar_ds.ll2coords(lon, lat)
+        # point_coords = sar_ds.ll2coords(lon, lat)
+        point_coords = find_pixel(dataset, point.x, point.y)
+        
         if np.isnan(point_coords).any():
-            print(
-                f"Choose a point inside the footprint: {sar_ds.footprint}, for: {point}"
+            logging.warning(
+                f"Choose a point inside the footprint: {footprint}, for: {point}"
             )
             continue
             # raise ValueError(f"Choose a point inside the footprint: {sar_ds.footprint}")
 
-        if "GRD" in path and "RS2" not in path and "RCM" not in path:
-            dist = {
-                "line": int(np.round(tile_size / 2 / sar_dm.pixel_line_m)),
-                "sample": int(np.round(tile_size / 2 / sar_dm.pixel_sample_m)),
-            }
+        if filename.startswith("S1"):
+            pixel_spacing = PIXELSPACING[fn.upper()]
         else:
-            dist = {
-                "line": int(np.round(tile_size / 2 / dataset.pixel_line_m)),
-                "sample": int(np.round(tile_size / 2 / dataset.pixel_sample_m)),
-            }
-
-        # tile = dataset.sel(
-        #    line=slice(
-        #        point_coords[0] - dist["line"], point_coords[0] + dist["line"] - 1
-        #    ),
-        #    sample=slice(
-        #        point_coords[1] - dist["sample"], point_coords[1] + dist["sample"] - 1
-        #    ),
-        # )
+            pixel_spacing = dataset.pixel_line_m
+            
+        dist = {
+            "line": int(np.round(tile_size / 2 / pixel_spacing)),
+            "sample": int(np.round(tile_size / 2 / pixel_spacing)),
+        }
         
         line_start = point_coords[0] - dist["line"]
         line_end = point_coords[0] + dist["line"]
@@ -490,14 +511,14 @@ def tiling_by_point(
 
         if isinstance(nperseg, int):
             if not tile.sizes["line"] == nperseg or not tile.sizes["sample"] == nperseg:
-                print(f"Error on tile size {tile.sizes}, for {point}")
+                logging.warning(f"Error on tile size {tile.sizes}, for {point}")
                 continue
         else:
             if (
                 not tile.sizes["line"] == nperseg["line"]
                 or not tile.sizes["sample"] == nperseg["sample"]
             ):
-                print(f"Error on tile size {tile.sizes}, for {point}")
+                logging.warning(f"Error on tile size {tile.sizes}, for {point}")
                 continue
             
         tile = tile.assign(origin_point=str(point))
@@ -574,7 +595,7 @@ def tiling_wv(
     resolution=None,
     detrend=True,
     to_keep_var=None,
-    config_file="/home1/datawork/jrmiadan/project/grdtiler/grdtiler/config.yaml",
+    config_file="config.yaml",
 ):
     """_summary_
 
@@ -602,7 +623,7 @@ def tiling_wv(
         raise ValueError("Path must be a Sentinel-1 WV path.")
 
     dataset, nperseg = tile_normalize(
-        path=path, dataset=dataset, tile_size=tile_size, resolution=resolution, detrend=detrend, to_keep_var=to_keep_var, config_file=config_file
+        dataset=dataset, tile_size=tile_size, resolution=resolution, detrend=detrend, to_keep_var=to_keep_var, config_file=config_file
     )
     is_cross_antimeridian = crosses_antimeridian(dataset.main_footprint)
     
