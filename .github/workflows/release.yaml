@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        shell: bash -el {0}   
+        shell: bash -el {0}
 
     steps:
       - uses: actions/checkout@v4
@@ -26,18 +26,17 @@ jobs:
             anaconda-client
             setuptools_scm
           cache-environment: true
-          init-shell: bash   
+          init-shell: bash
 
       - name: Build package
         run: |
           export GIT_DESCRIBE_TAG=${GITHUB_REF#refs/tags/}
-          conda build recipe/
+          conda build recipe/ --no-test
 
       - name: Upload to Anaconda
         env:
           ANACONDA_API_TOKEN: ${{ secrets.ANACONDA_API_TOKEN }}
         run: |
-          anaconda upload \
-            --token $ANACONDA_API_TOKEN \
+          anaconda -t $ANACONDA_API_TOKEN upload \
             --user Oceanscope \
-            $(conda build recipe/ --output)
+            $(conda build recipe/ --output --no-test)

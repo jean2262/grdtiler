@@ -1,10 +1,9 @@
 package:
   name: grdtiler
-  version: {{ environ.get('GIT_DESCRIBE_TAG', '').lstrip('v') }}
+  version: {{ environ.get('GIT_DESCRIBE_TAG', '0.0.0') | replace('v', '') }}
 
 source:
-  git_url: https://github.com/jean2262/grdtiler.git
-  git_rev: {{ environ.get('GIT_DESCRIBE_TAG') }}  
+  path: ..
 
 build:
   noarch: python
@@ -49,4 +48,4 @@ about:
 
 extra:
   recipe-maintainers:
-    - jean2262 
+    - jean2262
