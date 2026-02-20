@@ -21,7 +21,7 @@ def test_tile_comparison(path_to_product_sample):
     # Generate tiles using tiling_prod
     _, tiles_t = grdtiler.tiling_prod(path=path_to_product_sample, tile_size={'line': 17600, 'sample': 17600},
                                          resolution='400m', centering=True, side='left',
-                                         noverlap=0, save=False)
+                                         noverlap=0, save=False, config_file="grdtiler/config.yaml")
 
     # Comparison
     for i, tile_x in enumerate(xtiling_tiles):
