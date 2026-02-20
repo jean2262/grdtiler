@@ -35,7 +35,7 @@ def tiling_prod(
     save_dir=".",
     to_keep_var=None,
     add_footprint=True,
-    config_file="/home1/datawork/jrmiadan/project/grdtiler/grdtiler/config.yaml",
+    config_file="config.yaml",
 ):
 
     """
@@ -403,7 +403,7 @@ def tiling_by_point(
     save_dir=".",
     to_keep_var=None,
     scat_info=None,
-    config_file="/home1/datawork/jrmiadan/project/grdtiler/grdtiler/config.yaml",
+    config_file="config.yaml",
 ):
     """
     Tiles a radar or SAR dataset around specified points.
@@ -595,7 +595,7 @@ def tiling_wv(
     resolution=None,
     detrend=True,
     to_keep_var=None,
-    config_file="/home1/datawork/jrmiadan/project/grdtiler/grdtiler/config.yaml",
+    config_file="config.yaml",
 ):
     """_summary_
 
