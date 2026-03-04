@@ -25,18 +25,18 @@ PIXELSPACING = {
 # Function to tile SAR dataset
 def tiling_prod(
     path: str|xr.Dataset,
-    tile_size,
-    resolution=None,
-    detrend=True,
-    noverlap=0,
-    centering=False,
-    side="left",
-    save=False,
-    save_dir=".",
-    to_keep_var=None,
-    add_footprint=True,
-    config_file="config.yaml",
-):
+    tile_size: int,
+    resolution: str|int=None,
+    detrend: bool=True,
+    noverlap: int=0,
+    centering: bool=False,
+    side: str="left",
+    save: bool=False,
+    save_dir: str=".",
+    to_keep_var: list=None,
+    add_footprint: bool=True,
+    config_file: str="config.yaml",
+) -> xr.Dataset:
 
     """
     Tiles a radar or SAR dataset.
@@ -262,10 +262,10 @@ def tile_normalize(dataset, tile_size, resolution, noverlap=0, detrend=True, to_
         if key not in attributes_to_remove
     }
 
-    if "spatial_ref" in dataset.coords and "gcps" in dataset.spatial_ref.attrs:
-        dataset.spatial_ref.attrs.pop("gcps")
+    # if "spatial_ref" in dataset.coords and "gcps" in dataset.spatial_ref.attrs:
+    #     dataset.spatial_ref.attrs.pop("gcps")
 
-    dataset = dataset.load()
+    # dataset = dataset.load()
     return dataset, nperseg
 
 
@@ -366,7 +366,7 @@ def tiling(dataset, tile_size, noverlap, centering, side, add_footprint=True):
         tiles_with_footprint = add_tiles_footprint(tiles)
     else:
         tiles_with_footprint = tiles
-    
+        
     all_tiles = xr.concat(tiles_with_footprint, dim="tile")
     
     if add_footprint:
