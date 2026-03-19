@@ -1,131 +1,193 @@
 # GRDTILER
 
-This repository contains Python functions to process, normalize, and tile Synthetic Aperture Radar (SAR) datasets. The toolkit provides utilities to create tiles, normalize SAR data, and manage detrending processes, while supporting several SAR dataset formats.
+Python package for processing, normalising, and tiling Synthetic Aperture Radar (SAR) datasets. Supports Sentinel-1 (S1), Radarsat-2 (RS2), and RCM formats.
 
 ---
 
 ## Features
-- **Dataset Tiling:** Generate spatially consistent tiles from SAR datasets with configurable overlap and centering options.
-- **Detrending:** Apply detrending processes based on dataset polarization.
-- **Multi-Format Support:** Handle SAR dataset types such as GRD, RS2, and RCM.
-- **Point-based Tiling:** Generate tiles around specific geographic locations.
-- **Customizable Variables:** Retain only necessary variables in the processed tiles.
-- **Tile Saving:** Save processed tiles in NetCDF format.
+
+- **Grid tiling** — sliding-window tiles with configurable size, overlap, and centering
+- **Point-based tiling** — tiles centred around geographic coordinates
+- **Wave-mode tiling** — single-tile extraction for Sentinel-1 WV products
+- **Sigma0 detrending** — GMF-based detrending via `xsarsea` (CMOD5N, S1_V2, …)
+- **Multi-mission support** — S1, RS2, RCM with per-mission GMF configuration
+- **Footprint computation** — WKT polygon + centroid added to every tile
+- **NetCDF output** — hierarchical directory structure keyed by mode / size / resolution / date
 
 ---
 
 ## Installation
 
-Install the grdtiler using conda:
+### Conda (recommended)
 
 ```bash
 conda install grdtiler -c oceanscope
 ```
 
-Or clone the repository and install dependencies manually:
+### From source
 
 ```bash
 git clone https://github.com/jean2262/grdtiler.git
 cd grdtiler
+pip install -e .          # runtime dependencies only
+pip install -e ".[dev]"   # + pytest / pytest-cov
 ```
 
 ---
 
 ## Usage
 
-### 1. Tiling SAR Datasets
+### 1. Grid tiling — `tiling_prod`
+
+Slides a window across the full dataset and returns all complete tiles.
 
 ```python
 from grdtiler import tiling_prod
 
 dataset, tiles = tiling_prod(
-    path="/path/to/sar/dataset",
-    tile_size=17600,
+    path="/path/to/S1A_IW_GRDH.SAFE",
+    tile_size=17600,          # metres; or dict {"line": 17600, "sample": 17600}
     resolution="400m",
     detrend=True,
-    noverlap=32,
-    centering=False,
+    noverlap=0,               # pixels; or dict {"line": 0, "sample": 0}
+    centering=True,
+    side="left",
     save=True,
     save_dir="./tiles",
+    config_file="grdtiler/config.yaml",
 )
 ```
 
-### 2. Detrending SAR Datasets
+**Returns** `(dataset, tiles)` — both are `xr.Dataset`.
 
-```python
-from grdtiler import make_detrend
+---
 
-processed_path = make_detrend(
-    path="/path/to/sar/dataset",
-    resolution="10m",
-    save_dir="./processed",
-)
-```
+### 2. Point-based tiling — `tiling_by_point`
 
-### 3. Point-Based Tiling
+Extracts one tile centred on each supplied geographic point.
 
 ```python
 from shapely.geometry import Point
 from grdtiler import tiling_by_point
 
-posting_locations = [Point(-3.70379, 40.41678), Point(2.35222, 48.85661)]
-dataset, point_tiles = tiling_by_point(
-    path="/path/to/sar/dataset",
-    posting_loc=posting_locations,
-    tile_size=1024,
+locations = [Point(-3.704, 40.417), Point(2.352, 48.857)]
+
+dataset, tiles = tiling_by_point(
+    path="/path/to/S1A_IW_GRDH.SAFE",
+    posting_loc=locations,
+    tile_size=20000,          # metres
     resolution="10m",
     detrend=True,
     save=True,
     save_dir="./point_tiles",
+    config_file="grdtiler/config.yaml",
+)
+```
+
+Points outside the product footprint are skipped with a warning.
+
+---
+
+### 3. Wave-mode tiling — `tiling_wv`
+
+Extracts a single centred tile from a Sentinel-1 WV product. Antimeridian
+crossing is handled automatically.
+
+```python
+from grdtiler import tiling_wv
+
+dataset, tile = tiling_wv(
+    path="/path/to/S1A_WV_SLC.SAFE",
+    tile_size=20000,
+    resolution="10m",
+    detrend=True,
+    config_file="grdtiler/config.yaml",
 )
 ```
 
 ---
 
-## Key Functions
+## API reference
 
 ### `tiling_prod`
-Tiles SAR datasets into square tiles.
 
-**Parameters:**
-- `path` (str): Path to the dataset.
-- `tile_size` (int or dict): Size of the tiles in meters.
-- `resolution` (str, optional): Resolution of the dataset.
-- `save` (bool, optional): Whether to save the tiles.
-
-**Returns:**
-- Processed dataset and tiles.
-
-### `make_detrend`
-Applies detrending to SAR datasets.
-
-**Parameters:**
-- `path` (str): Path to the dataset.
-- `resolution` (str): Dataset resolution.
-- `save_dir` (str, optional): Directory to save the processed dataset.
-
-**Returns:**
-- Processed dataset.
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `path` | `str \| xr.Dataset` | — | Path to SAR product or pre-loaded dataset |
+| `tile_size` | `int \| dict` | — | Tile size in metres (`{"line": …, "sample": …}` for non-square) |
+| `resolution` | `str` | `None` | Target resolution, e.g. `"400m"` |
+| `detrend` | `bool` | `True` | Apply GMF-based sigma0 detrending |
+| `noverlap` | `int \| dict` | `0` | Overlap in pixels between adjacent tiles |
+| `centering` | `bool` | `False` | Centre the tiling grid inside the dataset |
+| `side` | `str` | `"left"` | Alignment when centering (`"left"` or `"right"`) |
+| `add_footprint` | `bool` | `True` | Compute and attach tile footprint + centroid |
+| `save` | `bool` | `False` | Save tiles to NetCDF |
+| `save_dir` | `str` | `"."` | Root directory for saved tiles |
+| `to_keep_var` | `list` | `None` | Variables to retain (default set if `None`) |
+| `config_file` | `str` | `"config.yaml"` | Path to GMF model configuration |
 
 ### `tiling_by_point`
-Generates tiles centered around specified geographic points.
 
-**Parameters:**
-- `path` (str): Path to the dataset.
-- `posting_loc` (list): List of `shapely.geometry.Point` objects.
-- `tile_size` (int): Size of tiles in meters.
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `path` | `str \| xr.Dataset` | — | Path to SAR product or pre-loaded dataset |
+| `posting_loc` | `list[Point]` | — | Shapely `Point` objects (lon, lat) |
+| `tile_size` | `int` | — | Tile size in metres |
+| `resolution` | `str` | `None` | Target resolution |
+| `detrend` | `bool` | `True` | Apply sigma0 detrending |
+| `scat_info` | `dict` | `None` | Scatterometer wind data to annotate tiles |
+| `save` | `bool` | `False` | Save tiles to NetCDF |
+| `save_dir` | `str` | `"."` | Root directory for saved tiles |
+| `to_keep_var` | `list` | `None` | Variables to retain |
+| `config_file` | `str` | `"config.yaml"` | Path to GMF model configuration |
 
-**Returns:**
-- Processed dataset and point-centered tiles.
+### `tiling_wv`
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `path` | `str` | — | Path to Sentinel-1 WV SAFE product |
+| `tile_size` | `int` | — | Tile size in metres |
+| `resolution` | `str` | `None` | Target resolution |
+| `detrend` | `bool` | `True` | Apply sigma0 detrending |
+| `to_keep_var` | `list` | `None` | Variables to retain |
+| `config_file` | `str` | `"config.yaml"` | Path to GMF model configuration |
 
 ---
 
-## Contributing
+## GMF configuration
 
-Contributions are welcome! Please fork the repository and submit a pull request with your improvements or bug fixes.
+The `config.yaml` file maps each mission to its GMF model names:
+
+```yaml
+gmf_base_path: "/path/to/gmf/nc_luts"
+
+gmf_models:
+    S1:
+        GMF_VV_NAME: "gmf_cmod5n"
+        GMF_VH_NAME: "gmf_s1_v2"
+        GMF_HH_NAME: "nc_lut_gmf_cmod7_Rhigh_hh_zhangA"
+        GMF_HV_NAME: "nc_lut_gmf_cmod7_Rhigh_hh_zhangA"
+    RS2:
+        GMF_VV_NAME: "gmf_cmod5n"
+        GMF_VH_NAME: "gmf_rs2_v2"
+    RCM:
+        GMF_VV_NAME: "gmf_cmod5n"
+        GMF_VH_NAME: "gmf_rcm_noaa"
+```
+
+---
+
+## Running tests
+
+```bash
+pip install -e ".[dev]"
+pytest tests/ -v
+```
+
+All 29 tests are self-contained — no SAR product download required.
 
 ---
 
 ## License
 
-This project is licensed under the MIT License. See the `LICENSE` file for details.
+MIT — see [`LICENSE`](LICENSE).

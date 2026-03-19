@@ -7,38 +7,6 @@ from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
 
-
-# def add_tiles_footprint(tiles):
-#     """
-#     Add footprint information to each tile in a list of tiles.
-
-#     Args:
-#         tiles (list): List of tile datasets.
-
-#     Returns:
-#         List[xr.Dataset]: List of tile datasets with footprint information added.
-
-#     Raises:
-#         ValueError: If the input is not a list or if any tile is missing required coordinates.
-#     """
-#     if not isinstance(tiles, list):
-#         raise ValueError("tiles must be a list of tiles data.")
-#     tiles_with_footprint = []
-#     for tile in tqdm(tiles, desc='Adding footprints'):
-#         footprint_dict = {}
-#         for ll in ['longitude', 'latitude']:
-#             footprint_dict[ll] = [
-#                 tile[ll].isel(tile_line=a, tile_sample=x).values for a, x in
-#                 [(0, 0), (0, -1), (-1, -1), (-1, 0)]
-#             ]
-#         corners = list(zip(footprint_dict['longitude'], footprint_dict['latitude']))
-#         tile_footprint = Polygon(corners)
-#         centroids = tile_footprint.centroid
-#         tiles_with_footprint.append(
-#             tile.assign(tile_footprint=str(tile_footprint), lon_centroid=centroids.x, lat_centroid=centroids.y))
-
-#     return tiles_with_footprint
-
 def process_single_tile(tile):
     """Process a single tile to add footprint information."""
     # Get corner coordinates using numpy operations instead of multiple isel calls
@@ -106,8 +74,9 @@ def save_tile(tiles, save_dir):
         save_dir (str): Directory where the tiles should be saved.
     """
     base_path = save_dir
-    year = datetime.strptime(tiles.start_date, '%Y-%m-%d %H:%M:%S.%f').year
-    day = datetime.strptime(tiles.start_date, '%Y-%m-%d %H:%M:%S.%f').timetuple().tm_yday
+    start_dt = datetime.strptime(tiles.start_date, '%Y-%m-%d %H:%M:%S.%f')
+    year = start_dt.year
+    day = start_dt.timetuple().tm_yday
     tile_sizes = tiles.attrs['tile_size'].split(' ')[0].split('*')
     resolution = tiles.attrs['resolution']
     mode = tiles.swath
@@ -127,10 +96,11 @@ def save_tile(tiles, save_dir):
 
     polarization = tiles.polarizations.split(' ')
 
+    start_date = start_dt.strftime('%Y%m%dT%H%M%S')
+    stop_date = datetime.strptime(tiles.stop_date, '%Y-%m-%d %H:%M:%S.%f').strftime('%Y%m%dT%H%M%S')
+
     if 'mean_wind_direction' in tiles.variables:
         save_name = filename.replace('GRDM', 'WDR').replace('GRDH', 'WDR').replace('GRD', 'WDR').replace('SGF', 'WDR')
-        start_date = datetime.strptime(tiles.start_date, '%Y-%m-%d %H:%M:%S.%f').strftime('%Y%m%dT%H%M%S')
-        stop_date = datetime.strptime(tiles.stop_date, '%Y-%m-%d %H:%M:%S.%f').strftime('%Y%m%dT%H%M%S')
         if 'S1' in filename:
             save_filename = (f"{save_name}/{safe[0]}-{tiles.swath.lower()}-wdr-{polarization[0].lower()}"
                              f"-{polarization[1].lower()}-{'-'.join(safe[4:-1])}.nc")
@@ -140,8 +110,6 @@ def save_tile(tiles, save_dir):
 
     else:
         save_name = filename.replace('GRDM', 'TIL').replace('GRDH', 'TIL').replace('GRD', 'TIL').replace('SGF', 'WDR')
-        start_date = datetime.strptime(tiles.start_date, '%Y-%m-%d %H:%M:%S.%f').strftime('%Y%m%dT%H%M%S')
-        stop_date = datetime.strptime(tiles.stop_date, '%Y-%m-%d %H:%M:%S.%f').strftime('%Y%m%dT%H%M%S')
         if 'S1' in filename:
             save_filename = (f"{save_name}/{safe[0]}-{tiles.swath.lower()}-til-{polarization[0].lower()}"
                              f"-{polarization[1].lower()}-{'-'.join(safe[4:-1])}.nc")
