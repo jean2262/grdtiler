@@ -525,7 +525,7 @@ def tiling_by_point(
         filename = Path(filename.split(":")[1]).name
     
     parts = filename.replace("-", "_").split("_")
-    fn = "_".join(parts[:3])
+    fn = "_".join([filename[0:2]] + parts[1:3])
     
     footprint = dataset.attrs["footprint"]
     footprint = wkt.loads(footprint) if isinstance(footprint, str) else footprint
