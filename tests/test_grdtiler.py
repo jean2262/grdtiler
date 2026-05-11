@@ -10,12 +10,14 @@ from shapely.geometry import Point, Polygon
 import grdtiler
 from grdtiler.grdtiler import (
     _detect_mission,
-    crosses_antimeridian,
+    _parse_footprint,
+    _tile_size_matches,
     find_pixel,
     load_dataset,
-    normalize_longitudes_to_360,
+    load_gmf_model,
     tiling,
 )
+from grdtiler.antimeridian import crosses_antimeridian, normalize_longitudes_to_360
 from grdtiler.tools import add_tiles_footprint, process_single_tile
 
 
@@ -35,9 +37,11 @@ def make_synthetic_dataset(n_lines=100, n_samples=80, pols=("VV", "VH")):
 
     return xr.Dataset(
         {
-            "longitude": (["line", "sample"], lon),
-            "latitude":  (["line", "sample"], lat),
-            "sigma0":    (["pol", "line", "sample"], sigma0),
+            "longitude":    (["line", "sample"], lon),
+            "latitude":     (["line", "sample"], lat),
+            "sigma0":       (["pol", "line", "sample"], sigma0),
+            "sampleSpacing": ([], 10.0),
+            "lineSpacing":   ([], 10.0),
         },
         coords={"line": lines, "sample": samples, "pol": list(pols)},
     )
@@ -84,6 +88,51 @@ class TestDetectMission:
 
 
 # ---------------------------------------------------------------------------
+# _parse_footprint
+# ---------------------------------------------------------------------------
+
+class TestParseFootprint:
+    def test_parses_wkt_string(self):
+        wkt = "POLYGON ((-5 40, 5 40, 5 50, -5 50, -5 40))"
+        result = _parse_footprint(wkt)
+        assert isinstance(result, Polygon)
+
+    def test_passthrough_geometry(self):
+        poly = Polygon([(-5, 40), (5, 40), (5, 50), (-5, 50)])
+        assert _parse_footprint(poly) is poly
+
+
+# ---------------------------------------------------------------------------
+# _tile_size_matches
+# ---------------------------------------------------------------------------
+
+class TestTileSizeMatches:
+    def _make_tile(self, n_line, n_sample):
+        return xr.Dataset(
+            coords={
+                "tile_line":   np.arange(n_line),
+                "tile_sample": np.arange(n_sample),
+            }
+        ).rename({"tile_line": "line", "tile_sample": "sample"})
+
+    def test_int_match(self):
+        ds = make_synthetic_dataset(n_lines=20, n_samples=20)
+        assert _tile_size_matches(ds, 20) is True
+
+    def test_int_no_match(self):
+        ds = make_synthetic_dataset(n_lines=20, n_samples=20)
+        assert _tile_size_matches(ds, 10) is False
+
+    def test_dict_match(self):
+        ds = make_synthetic_dataset(n_lines=20, n_samples=40)
+        assert _tile_size_matches(ds, {"line": 20, "sample": 40}) is True
+
+    def test_dict_no_match(self):
+        ds = make_synthetic_dataset(n_lines=20, n_samples=40)
+        assert _tile_size_matches(ds, {"line": 20, "sample": 20}) is False
+
+
+# ---------------------------------------------------------------------------
 # load_dataset
 # ---------------------------------------------------------------------------
 
@@ -100,6 +149,42 @@ class TestLoadDataset:
     def test_unsupported_extension_raises(self):
         with pytest.raises(ValueError, match="Unsupported"):
             load_dataset("/data/some_image.tif")
+
+
+# ---------------------------------------------------------------------------
+# load_gmf_model
+# ---------------------------------------------------------------------------
+
+class TestLoadGmfModel:
+    def test_both_none_raises(self):
+        with pytest.raises(ValueError, match="Either config or config_file must be provided"):
+            load_gmf_model("S1A_IW_GRDH_foo", "VV", config_file=None, config=None)
+
+    def test_preloaded_config(self):
+        config = {
+            "gmf_base_path": "/fake/path",
+            "gmf_models": {
+                "S1": {
+                    "GMF_VV_NAME": "gmf_cmod5n",
+                    "GMF_VH_NAME": "gmf_s1_v2",
+                }
+            },
+        }
+        result = load_gmf_model("S1A_IW_GRDH_foo", "VV", config=config)
+        assert result == "gmf_cmod5n"
+
+    def test_preloaded_config_vh(self):
+        config = {
+            "gmf_base_path": "/fake/path",
+            "gmf_models": {
+                "S1": {
+                    "GMF_VV_NAME": "gmf_cmod5n",
+                    "GMF_VH_NAME": "gmf_s1_v2",
+                }
+            },
+        }
+        result = load_gmf_model("S1A_IW_GRDH_foo", "VH", config=config)
+        assert result == "gmf_s1_v2"
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +231,6 @@ class TestTiling:
 
     def test_dict_noverlap(self):
         ds = make_synthetic_dataset(n_lines=60, n_samples=60)
-        # Should not raise with dict noverlap (previous bug: TypeError)
         tiles = tiling(ds, tile_size=20, noverlap={"line": 5, "sample": 5},
                        centering=False, side="left", add_footprint=False)
         assert tiles.sizes["tile"] > 0
@@ -192,7 +276,6 @@ class TestFindPixel:
 
     def test_exact_pixel_recovered(self):
         ds = self._make_grid()
-        # Pick the pixel at (line=100, sample=75) — its exact lon/lat
         lon0 = float(ds.longitude.isel(line=100, sample=75))
         lat0 = float(ds.latitude.isel(line=100, sample=75))
         line, sample = find_pixel(ds, lon0, lat0)
@@ -201,7 +284,6 @@ class TestFindPixel:
 
     def test_nearest_pixel_for_off_grid_point(self):
         ds = self._make_grid()
-        # Point slightly off-grid — should return the nearest pixel
         lon0 = float(ds.longitude.isel(line=50, sample=30)) + 1e-6
         lat0 = float(ds.latitude.isel(line=50, sample=30)) + 1e-6
         line, sample = find_pixel(ds, lon0, lat0)
@@ -231,31 +313,32 @@ class TestFindPixel:
 # ---------------------------------------------------------------------------
 
 class TestAntimeridian:
-    def _make_polygon(self, coords):
-        return Polygon(coords)
-
     def test_normal_polygon_does_not_cross(self):
-        poly = self._make_polygon([(-10, 40), (10, 40), (10, 50), (-10, 50), (-10, 40)])
+        poly = Polygon([(-10, 40), (10, 40), (10, 50), (-10, 50), (-10, 40)])
         assert crosses_antimeridian(poly) is False
 
     def test_antimeridian_crossing_detected(self):
-        # Polygon spanning from +170 to -170 (crosses antimeridian)
-        poly = self._make_polygon([(170, 40), (-170, 40), (-170, 50), (170, 50), (170, 40)])
+        poly = Polygon([(170, 40), (-170, 40), (-170, 50), (170, 50), (170, 40)])
         assert crosses_antimeridian(poly) is True
 
     def test_normalize_negative_longitudes(self):
-        poly = self._make_polygon([(-170, 40), (-160, 40), (-160, 50), (-170, 50), (-170, 40)])
+        poly = Polygon([(-170, 40), (-160, 40), (-160, 50), (-170, 50), (-170, 40)])
         result = normalize_longitudes_to_360(poly)
         assert result is not None
         all_lons = [coord[0] for coord in result.exterior.coords]
         assert all(lon >= 0 for lon in all_lons)
 
     def test_normalize_already_positive(self):
-        poly = self._make_polygon([(10, 40), (20, 40), (20, 50), (10, 50), (10, 40)])
+        poly = Polygon([(10, 40), (20, 40), (20, 50), (10, 50), (10, 40)])
         result = normalize_longitudes_to_360(poly)
         original_lons = [c[0] for c in poly.exterior.coords]
         result_lons   = [c[0] for c in result.exterior.coords]
         assert original_lons == result_lons
+
+    def test_crosses_antimeridian_importable_from_package(self):
+        from grdtiler import crosses_antimeridian as ca
+        poly = Polygon([(-10, 40), (10, 40), (10, 50), (-10, 50), (-10, 40)])
+        assert ca(poly) is False
 
 
 # ---------------------------------------------------------------------------
@@ -291,14 +374,14 @@ class TestTools:
 
 
 # ---------------------------------------------------------------------------
-# Integration test — fully synthetic dataset, no external file needed
+# Integration — fully synthetic dataset, no external file needed
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
 def synthetic_sar_dataset():
     """
-    Minimal xr.Dataset that mimics the structure expected by tiling_prod
-    (attrs + variables). Uses detrend=False so no GMF/xsarsea calls are made.
+    Minimal xr.Dataset that mimics the structure expected by tiling_prod.
+    Uses detrend=False so no GMF/xsarsea calls are made.
     """
     rng = np.random.default_rng(42)
     n_lines, n_samples, pols = 120, 100, ["VV", "VH"]
@@ -309,7 +392,7 @@ def synthetic_sar_dataset():
     shape2 = (n_lines, n_samples)
     shape3 = (len(pols), n_lines, n_samples)
 
-    ds = xr.Dataset(
+    return xr.Dataset(
         {
             "sigma0":         (["pol", "line", "sample"], rng.uniform(0, 1, shape3)),
             "digital_number": (["pol", "line", "sample"], rng.uniform(0, 1, shape3)),
@@ -319,24 +402,25 @@ def synthetic_sar_dataset():
             "ground_heading": (["line", "sample"],        rng.uniform(0, 360, shape2)),
             "longitude":      (["line", "sample"],        rng.uniform(-5, 5, shape2)),
             "latitude":       (["line", "sample"],        rng.uniform(40, 50, shape2)),
+            "sampleSpacing":  ([], 1.0),
+            "lineSpacing":    ([], 1.0),
         },
         coords={"line": lines, "sample": samples, "pol": pols},
         attrs={
-            "pols":      "VV VH",
-            "product":   "GRDH",
-            "footprint": "POLYGON ((-5 40, 5 40, 5 50, -5 50, -5 40))",
-            "safe":      "S1A_IW_GRDH_1SDV_20210101T000000_20210101T000025_000000_000000.SAFE",
-            "swath":     "IW",
+            "pols":       "VV VH",
+            "product":    "GRDH",
+            "footprint":  "POLYGON ((-5 40, 5 40, 5 50, -5 50, -5 40))",
+            "safe":       "S1A_IW_GRDH_1SDV_20210101T000000_20210101T000025_000000_000000.SAFE",
+            "swath":      "IW",
             "start_date": "2021-01-01 00:00:00.000000",
             "stop_date":  "2021-01-01 00:00:25.000000",
         },
     )
-    return ds
 
 
 def test_tiling_prod_structure(synthetic_sar_dataset):
     """Validate tiling_prod output structure using a fully synthetic dataset."""
-    tile_size = 20   # pixels (resolution=None → 1 m/pixel → nperseg=20)
+    tile_size = 20
 
     _, tiles = grdtiler.tiling_prod(
         path=synthetic_sar_dataset,
@@ -349,7 +433,6 @@ def test_tiling_prod_structure(synthetic_sar_dataset):
         add_footprint=True,
     )
 
-    # Dimensions
     assert "tile" in tiles.dims
     assert "tile_line" in tiles.dims
     assert "tile_sample" in tiles.dims
@@ -358,17 +441,118 @@ def test_tiling_prod_structure(synthetic_sar_dataset):
     assert tiles.sizes["tile_line"] == tile_size
     assert tiles.sizes["tile_sample"] == tile_size
 
-    # Expected variables (detrend=False → no sigma0_detrend)
     for var in ("sigma0", "longitude", "latitude",
                 "tile_footprint", "lon_centroid", "lat_centroid"):
         assert var in tiles, f"Missing variable: {var}"
 
-    # Polarisations
     assert set(tiles.pol.values) == {"VV", "VH"}
-
-    # No all-NaN sigma0
     assert not np.all(np.isnan(tiles["sigma0"].values))
-
-    # Footprint comment set
     assert tiles["tile_footprint"].attrs.get("comment") == "Footprint of the tile"
 
+
+def _make_resampled_dataset(sampleSpacing: float, n: int = 300):
+    """Synthetic SAR dataset that mimics a dataset already resampled by xsar.
+
+    After xsar loads at e.g. '100m' resolution, sampleSpacing reflects the
+    actual pixel spacing (~100 m).  Tests that exercise resolution conversion
+    must pass a dataset whose sampleSpacing matches the intended resolution.
+    """
+    rng = np.random.default_rng(7)
+    pols = ["VV", "VH"]
+    lines   = np.arange(n, dtype=float)
+    samples = np.arange(n, dtype=float)
+    shape2  = (n, n)
+    shape3  = (len(pols), n, n)
+    return xr.Dataset(
+        {
+            "sigma0":         (["pol", "line", "sample"], rng.uniform(0, 1, shape3)),
+            "digital_number": (["pol", "line", "sample"], rng.uniform(0, 1, shape3)),
+            "land_mask":      (["line", "sample"],        np.zeros(shape2, dtype=bool)),
+            "incidence":      (["pol", "line", "sample"], rng.uniform(20, 45, shape3)),
+            "nesz":           (["pol", "line", "sample"], rng.uniform(0, 0.1, shape3)),
+            "ground_heading": (["line", "sample"],        rng.uniform(0, 360, shape2)),
+            "longitude":      (["line", "sample"],        rng.uniform(-5, 5, shape2)),
+            "latitude":       (["line", "sample"],        rng.uniform(40, 50, shape2)),
+            "sampleSpacing":  ([], sampleSpacing),
+            "lineSpacing":    ([], sampleSpacing),
+        },
+        coords={"line": lines, "sample": samples, "pol": pols},
+        attrs={
+            "pols":       "VV VH",
+            "product":    "GRDH",
+            "footprint":  "POLYGON ((-5 40, 5 40, 5 50, -5 50, -5 40))",
+            "safe":       "S1A_IW_GRDH_1SDV_20210101T000000_20210101T000025_000000_000000.SAFE",
+            "swath":      "IW",
+            "start_date": "2021-01-01 00:00:00.000000",
+            "stop_date":  "2021-01-01 00:00:25.000000",
+        },
+    )
+
+
+def test_tiling_prod_dict_resolution():
+    """Dict resolution {"line": N, "sample": N} should produce the correct tile pixel size.
+
+    Resolution dict values represent the pixel spacing in metres after xsar
+    resampling.  We simulate this by building a dataset whose sampleSpacing
+    matches the intended resolution (100 m here).
+    """
+    tile_size  = 2000
+    resolution = {"line": 100, "sample": 100}
+    ds = _make_resampled_dataset(sampleSpacing=100.0)
+
+    _, tiles = grdtiler.tiling_prod(
+        path=ds,
+        tile_size=tile_size,
+        resolution=resolution,
+        detrend=False,
+        centering=False,
+        noverlap=0,
+        save=False,
+        add_footprint=False,
+    )
+
+    assert tiles.sizes["tile_line"]   == tile_size // resolution["line"]
+    assert tiles.sizes["tile_sample"] == tile_size // resolution["sample"]
+
+
+def test_tiling_prod_string_resolution():
+    """String resolution '100m' should divide tile_size metres by 100.
+
+    After xsar loads the product at '100m' resolution, sampleSpacing is ~100.
+    We simulate this by building a dataset with sampleSpacing=100.
+    """
+    tile_size  = 2000
+    resolution = "100m"
+    ds = _make_resampled_dataset(sampleSpacing=100.0)
+
+    _, tiles = grdtiler.tiling_prod(
+        path=ds,
+        tile_size=tile_size,
+        resolution=resolution,
+        detrend=False,
+        centering=False,
+        noverlap=0,
+        save=False,
+        add_footprint=False,
+    )
+
+    assert tiles.sizes["tile_line"]   == tile_size // 100
+    assert tiles.sizes["tile_sample"] == tile_size // 100
+
+
+def test_tiling_prod_to_keep_var_not_mutated(synthetic_sar_dataset):
+    """to_keep_var passed by the caller must not be mutated."""
+    original = ["sigma0", "land_mask"]
+    to_keep  = list(original)
+
+    grdtiler.tiling_prod(
+        path=synthetic_sar_dataset,
+        tile_size=20,
+        resolution=None,
+        detrend=False,
+        to_keep_var=to_keep,
+        save=False,
+        add_footprint=False,
+    )
+
+    assert to_keep == original
