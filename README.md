@@ -11,6 +11,7 @@ Python package for processing, normalising, and tiling Synthetic Aperture Radar 
 - **Wave-mode tiling** — single-tile extraction for Sentinel-1 WV products
 - **Sigma0 detrending** — GMF-based detrending via `xsarsea` (CMOD5N, S1_V2, …)
 - **Multi-mission support** — S1, RS2, RCM with per-mission GMF configuration
+- **Antimeridian handling** — automatic longitude normalisation for crossing products
 - **Footprint computation** — WKT polygon + centroid added to every tile
 - **NetCDF output** — hierarchical directory structure keyed by mode / size / resolution / date
 
@@ -47,7 +48,7 @@ from grdtiler import tiling_prod
 dataset, tiles = tiling_prod(
     path="/path/to/S1A_IW_GRDH.SAFE",
     tile_size=17600,          # metres; or dict {"line": 17600, "sample": 17600}
-    resolution="400m",
+    resolution="400m",        # str (e.g. "400m") or dict {"line": 20, "sample": 20} in pixels
     detrend=True,
     noverlap=0,               # pixels; or dict {"line": 0, "sample": 0}
     centering=True,
@@ -64,7 +65,9 @@ dataset, tiles = tiling_prod(
 
 ### 2. Point-based tiling — `tiling_by_point`
 
-Extracts one tile centred on each supplied geographic point.
+Extracts one tile centred on each supplied geographic point. Products that cross
+the antimeridian are handled automatically — point containment is tested in
+normalised [0, 360] longitude space when needed.
 
 ```python
 from shapely.geometry import Point
@@ -107,6 +110,38 @@ dataset, tile = tiling_wv(
 
 ---
 
+### 4. Standalone detrending — `make_detrend`
+
+Applies GMF-based sigma0 detrending to any pre-loaded SAR dataset without
+triggering the full tiling pipeline.
+
+```python
+from grdtiler import make_detrend
+
+dataset = make_detrend(
+    path="/path/to/S1A_IW_GRDH.SAFE",   # or xr.Dataset
+    config="grdtiler/config.yaml",        # path or pre-loaded dict
+    resolution="400m",
+)
+# dataset now contains sigma0_no_nan and sigma0_detrend variables
+```
+
+---
+
+### 5. Antimeridian utilities — `crosses_antimeridian`, `normalize_longitudes_to_360`
+
+```python
+from grdtiler import crosses_antimeridian, normalize_longitudes_to_360
+from shapely import wkt
+
+footprint = wkt.loads(dataset.attrs["footprint"])
+
+if crosses_antimeridian(footprint):
+    footprint_360 = normalize_longitudes_to_360(footprint)
+```
+
+---
+
 ## API reference
 
 ### `tiling_prod`
@@ -114,16 +149,16 @@ dataset, tile = tiling_wv(
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `path` | `str \| xr.Dataset` | — | Path to SAR product or pre-loaded dataset |
-| `tile_size` | `int \| dict` | — | Tile size in metres (`{"line": …, "sample": …}` for non-square) |
-| `resolution` | `str` | `None` | Target resolution, e.g. `"400m"` |
+| `tile_size` | `int \| dict[str, int]` | — | Tile size in metres (`{"line": …, "sample": …}` for non-square) |
+| `resolution` | `str \| dict \| None` | `None` | Target resolution, e.g. `"400m"` (string) or `{"line": 20, "sample": 20}` (pixels per axis) |
 | `detrend` | `bool` | `True` | Apply GMF-based sigma0 detrending |
-| `noverlap` | `int \| dict` | `0` | Overlap in pixels between adjacent tiles |
+| `noverlap` | `int \| dict[str, int]` | `0` | Overlap in pixels between adjacent tiles |
 | `centering` | `bool` | `False` | Centre the tiling grid inside the dataset |
 | `side` | `str` | `"left"` | Alignment when centering (`"left"` or `"right"`) |
 | `add_footprint` | `bool` | `True` | Compute and attach tile footprint + centroid |
 | `save` | `bool` | `False` | Save tiles to NetCDF |
 | `save_dir` | `str` | `"."` | Root directory for saved tiles |
-| `to_keep_var` | `list` | `None` | Variables to retain (default set if `None`) |
+| `to_keep_var` | `list[str] \| None` | `None` | Variables to retain (default set if `None`) |
 | `config_file` | `str` | `"config.yaml"` | Path to GMF model configuration |
 
 ### `tiling_by_point`
@@ -133,12 +168,12 @@ dataset, tile = tiling_wv(
 | `path` | `str \| xr.Dataset` | — | Path to SAR product or pre-loaded dataset |
 | `posting_loc` | `list[Point]` | — | Shapely `Point` objects (lon, lat) |
 | `tile_size` | `int` | — | Tile size in metres |
-| `resolution` | `str` | `None` | Target resolution |
+| `resolution` | `str \| dict \| None` | `None` | Target resolution, e.g. `"400m"` or `{"line": 20, "sample": 20}` (pixels per axis) |
 | `detrend` | `bool` | `True` | Apply sigma0 detrending |
-| `scat_info` | `dict` | `None` | Scatterometer wind data to annotate tiles |
+| `scat_info` | `dict \| None` | `None` | Scatterometer wind data to annotate tiles |
 | `save` | `bool` | `False` | Save tiles to NetCDF |
 | `save_dir` | `str` | `"."` | Root directory for saved tiles |
-| `to_keep_var` | `list` | `None` | Variables to retain |
+| `to_keep_var` | `list[str] \| None` | `None` | Variables to retain |
 | `config_file` | `str` | `"config.yaml"` | Path to GMF model configuration |
 
 ### `tiling_wv`
@@ -147,10 +182,31 @@ dataset, tile = tiling_wv(
 |---|---|---|---|
 | `path` | `str` | — | Path to Sentinel-1 WV SAFE product |
 | `tile_size` | `int` | — | Tile size in metres |
-| `resolution` | `str` | `None` | Target resolution |
+| `resolution` | `str \| dict \| None` | `None` | Target resolution, e.g. `"400m"` or `{"line": 20, "sample": 20}` (pixels per axis) |
 | `detrend` | `bool` | `True` | Apply sigma0 detrending |
-| `to_keep_var` | `list` | `None` | Variables to retain |
+| `to_keep_var` | `list[str] \| None` | `None` | Variables to retain |
 | `config_file` | `str` | `"config.yaml"` | Path to GMF model configuration |
+
+### `make_detrend`
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `path` | `str \| xr.Dataset` | — | Path to SAR product or pre-loaded dataset |
+| `config` | `str \| dict` | — | Path to GMF config YAML or pre-loaded dict |
+| `resolution` | `str \| dict \| None` | `None` | Target resolution, e.g. `"400m"` or `{"line": 20, "sample": 20}` (pixels per axis) |
+
+### `crosses_antimeridian`
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `polygon` | `Polygon \| MultiPolygon` | — | Shapely geometry to test |
+| `threshold` | `float` | `150` | Longitude threshold for crossing detection |
+
+### `normalize_longitudes_to_360`
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `polygon` | `Polygon` | — | Shapely polygon with coordinates in [-180, 180] |
 
 ---
 

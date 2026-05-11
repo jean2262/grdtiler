@@ -12,12 +12,12 @@ build:
 
 requirements:
   build:
-    - python >=3.10,<3.12
+    - python >=3.10,<3.13
     - setuptools
     - setuptools_scm
     - pip
   host:
-    - python >=3.10,<3.12
+    - python >=3.10,<3.13
     - numpy
     - pytest
     - pytest-cov
@@ -30,7 +30,7 @@ requirements:
     - xarray-safe-rcm
     - xsarsea
   run:
-    - python >=3.10,<3.12
+    - python >=3.10,<3.13
     - numpy
     - tqdm
     - shapely
