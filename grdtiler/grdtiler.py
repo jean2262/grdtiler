@@ -544,12 +544,6 @@ def tiling_by_point(
     logger.info("Start tiling...")
 
     tiles = []
-    filename = dataset.attrs["safe"] if "safe" in dataset.attrs else dataset.attrs["name"]
-    if ":" in filename:
-        filename = Path(filename.split(":")[1]).name
-
-    parts = filename.replace("-", "_").split("_")
-    fn = f"S1_{parts[1]}_{parts[2]}"
 
     footprint = _parse_footprint(dataset.attrs["footprint"])
     antimeridian_crossing = crosses_antimeridian(footprint)
@@ -564,8 +558,19 @@ def tiling_by_point(
     dataset, nperseg = tile_normalize(
         dataset=dataset, tile_size=tile_size, resolution=resolution, detrend=detrend, to_keep_var=to_keep_var, config_file=config_file
     )
+    if "safe" in dataset.attrs:
+        filename = dataset.attrs["safe"]
+    elif "dir_name":
+        filename = dataset.attrs["dir_name"]
+    else:
+        filename = dataset.attrs["name"]
+        
+    if ":" in filename:
+        filename = Path(filename.split(":")[1]).name
 
     if filename.upper().startswith("S1"):
+        parts = filename.replace("-", "_").split("_")
+        fn = f"S1_{parts[1]}_{parts[2]}"
         pixel_spacing = PIXELSPACING[fn.upper()]
     else:
         pixel_spacing = dataset.pixel_line_m
@@ -623,7 +628,7 @@ def tiling_by_point(
             logger.warning(f"Error on tile size {tile.sizes}, for {point}")
             continue
 
-        tile = tile.assign(origin_point=str(point))
+        tile = tile.assign(origin_point=np.array(str(point), dtype=object))
         if scat_info:
             tile = tile.assign(
                 scat_wind_direction=scat_info["wind_direction"][i],
@@ -774,8 +779,8 @@ def tiling_wv(
     safe_name = Path(path).name
 
     tile = tile.assign(
-        origin_point=str(point),
-        origin_safe=str(safe_name)
+        origin_point=np.array(str(point), dtype=object),
+        origin_safe=np.array(str(safe_name), dtype=object)
     )
 
     tiles = [

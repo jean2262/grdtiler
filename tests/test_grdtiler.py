@@ -372,6 +372,25 @@ class TestTools:
         result = add_tiles_footprint(tiles)
         assert len(result) == 5
 
+    def test_process_single_tile_antimeridian_centroid(self):
+        """Centroid lon must be near 180° (not near 0°) for antimeridian tiles."""
+        n = 4
+        # Corners that straddle the antimeridian: ~170° to ~-170°
+        lons = np.array([[170.0, -170.0], [170.0, -170.0]])
+        lats = np.array([[40.0, 40.0], [50.0, 50.0]])
+        # Expand to n×n by repeating
+        lons = np.kron(lons, np.ones((n // 2, n // 2)))
+        lats = np.kron(lats, np.ones((n // 2, n // 2)))
+        tile = xr.Dataset(
+            {"longitude": (["tile_line", "tile_sample"], lons),
+             "latitude":  (["tile_line", "tile_sample"], lats)},
+            coords={"tile_line": np.arange(n), "tile_sample": np.arange(n)},
+        )
+        result = process_single_tile(tile)
+        lon_c = float(result.lon_centroid)
+        # Centroid should be near ±180°, not near 0°
+        assert abs(lon_c) > 150, f"Antimeridian centroid longitude {lon_c} is wrong (expected near ±180)"
+
 
 # ---------------------------------------------------------------------------
 # Integration — fully synthetic dataset, no external file needed

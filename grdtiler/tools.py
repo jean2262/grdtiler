@@ -1,5 +1,6 @@
 from tqdm import tqdm
 from shapely.geometry import Polygon
+import numpy as np
 import os
 import logging
 from datetime import datetime
@@ -9,28 +10,39 @@ logger = logging.getLogger(__name__)
 
 def process_single_tile(tile):
     """Process a single tile to add footprint information."""
-    # Get corner coordinates using numpy operations instead of multiple isel calls
     corners_idx = [(0, 0), (0, -1), (-1, -1), (-1, 0)]
-    
-    # Extract coordinates all at once
+
     lons = tile['longitude'].values
     lats = tile['latitude'].values
-    
-    # Get corners using direct numpy indexing
-    corner_coords = [
-        (lons[i, j], lats[i, j])
-        for i, j in corners_idx
-    ]
-    
-    # Create polygon and get centroid
+
+    corner_coords = [(lons[i, j], lats[i, j]) for i, j in corners_idx]
+
+    # Store the footprint in original [-180, 180] space.
     tile_footprint = Polygon(corner_coords)
-    centroids = tile_footprint.centroid
-    
-    # Return new tile with added attributes
+
+    # Detect antimeridian crossing: any corner pair straddles ±180°.
+    corner_lons = [c[0] for c in corner_coords]
+    crosses = max(corner_lons) > 150 and min(corner_lons) < -150
+
+    if crosses:
+        # Normalize to [0, 360] so Shapely computes the centroid correctly.
+        norm_coords = [((lon + 360) if lon < 0 else lon, lat) for lon, lat in corner_coords]
+        centroid = Polygon(norm_coords).centroid
+        # Convert centroid longitude back to [-180, 180].
+        lon_c = centroid.x - 360 if centroid.x > 180 else centroid.x
+        lat_c = centroid.y
+    else:
+        centroid = tile_footprint.centroid
+        lon_c = centroid.x
+        lat_c = centroid.y
+
+    # Store as object dtype to prevent fixed-length string truncation in NetCDF4.
+    # Antimeridian WKTs are longer (extra '-' sign per coord) and would be clipped
+    # if numpy used a U{n} dtype sized by the shorter normal-tile footprints.
     return tile.assign(
-        tile_footprint=str(tile_footprint),
-        lon_centroid=centroids.x,
-        lat_centroid=centroids.y
+        tile_footprint=np.array(str(tile_footprint), dtype=object),
+        lon_centroid=lon_c,
+        lat_centroid=lat_c,
     )
 
 def add_tiles_footprint(tiles, max_workers=None):
@@ -121,7 +133,13 @@ def save_tile(tiles, save_dir):
     save_path = os.path.join(tiles_dir, save_filename)
     if not os.path.exists(save_path):
         try:
-            tiles.to_netcdf(save_path, mode='w', format='NETCDF4')
+            # Cast fixed-length unicode variables to object dtype so xarray writes
+            # them as variable-length NetCDF4 strings, preventing WKT truncation.
+            save_ds = tiles.copy()
+            for var_name, da in save_ds.data_vars.items():
+                if da.dtype.kind in ("U", "S"):
+                    save_ds[var_name] = da.astype(object)
+            save_ds.to_netcdf(save_path, mode='w', format='NETCDF4')
         except Exception as e:
             logging.info(f"Error saving tiles to {save_path}. Error: {e}")
     else:
