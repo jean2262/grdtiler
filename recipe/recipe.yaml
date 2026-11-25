@@ -1,0 +1,54 @@
+context:
+  version: ${{ env.get("GRDTILER_VERSION", default="0.0.0") }}
+
+package:
+  name: grdtiler
+  version: ${{ version }}
+
+source:
+  path: ..
+
+build:
+  noarch: python
+  number: 0
+  script:
+    env:
+      SETUPTOOLS_SCM_PRETEND_VERSION: ${{ version }}
+    content: ${{ PYTHON }} -m pip install . --no-deps --no-build-isolation -vv
+
+requirements:
+  host:
+    - python >=3.10,<3.13
+    - pip
+    - setuptools >=64
+    - setuptools-scm
+  run:
+    - python >=3.10,<3.13
+    - numpy
+    - pyyaml
+    - tqdm
+    - shapely
+    - xarray
+    - xsar >=2026.11.19
+    - xarray-safe-s1
+    - xradarsat2
+    - xarray-safe-rcm
+    - xsarsea
+    - xmlschema >=3.4.3,<4
+
+tests:
+  - python:
+      imports:
+        - grdtiler
+      pip_check: false
+
+about:
+  homepage: https://github.com/jean2262/grdtiler
+  repository: https://github.com/jean2262/grdtiler
+  license: MIT
+  license_file: LICENSE
+  summary: A package for tiling GRD products
+
+extra:
+  recipe-maintainers:
+    - jean2262

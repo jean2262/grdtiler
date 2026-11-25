@@ -67,9 +67,10 @@ grdtiler/_version.py
 # Personal GMF config (paths are machine-specific)
 grdtiler/config_myuse.yaml
 
-# pip utility bundled by mistake
-grdtiler/get-pip.py
-
 # Sphinx / mkdocs build output
 docs/_build/
 site/
+
+# pixi environments
+.pixi/
+output/
