@@ -7,36 +7,29 @@ on:
 jobs:
   build-and-upload:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash -el {0}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - name: Set up micromamba
-        uses: mamba-org/setup-micromamba@v1
+      - name: Setup pixi
+        uses: prefix-dev/setup-pixi@v0.11.3
         with:
-          environment-name: build-env
-          create-args: >-
-            python=3.11
-            conda-build
-            anaconda-client
-            setuptools_scm
-          cache-environment: true
-          init-shell: bash
+          environments: build
+          locked: true
+          cache: true
 
       - name: Build package
         run: |
-          export GIT_DESCRIBE_TAG=${GITHUB_REF#refs/tags/}
-          conda build recipe/ --no-test
+          export GRDTILER_VERSION=${GITHUB_REF_NAME#v}
+          pixi run -e build build
 
       - name: Upload to Anaconda
         env:
-          ANACONDA_API_TOKEN: ${{ secrets.ANACONDA_API_TOKEN }}
+          ANACONDA_API_KEY: ${{ secrets.ANACONDA_API_TOKEN }}
         run: |
-          anaconda -t $ANACONDA_API_TOKEN upload \
-            --user Oceanscope \
-            $(conda build recipe/ --output --no-test)
+          pixi run -e build rattler-build upload anaconda \
+            --owner Oceanscope \
+            --api-key "$ANACONDA_API_KEY" \
+            output/noarch/*.conda

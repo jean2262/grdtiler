@@ -30,8 +30,7 @@ conda install grdtiler -c oceanscope
 ```bash
 git clone https://github.com/jean2262/grdtiler.git
 cd grdtiler
-pip install -e .          # runtime dependencies only
-pip install -e ".[dev]"   # + pytest / pytest-cov
+pixi install              # conda-forge env in .pixi/, grdtiler installed editable
 ```
 
 ---
@@ -236,11 +235,10 @@ gmf_models:
 ## Running tests
 
 ```bash
-pip install -e ".[dev]"
-pytest tests/ -v
+pixi run test
 ```
 
-All 29 tests are self-contained — no SAR product download required.
+All tests are self-contained — no SAR product download required.
 
 ---
 

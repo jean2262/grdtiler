@@ -11,11 +11,13 @@ dependencies = [
     "tqdm",
     "shapely",
     "xarray",
-    "xsar>=2024.12.3",
+    "pyyaml",
+    "xsar>=2026.11.19",
     "xarray-safe-s1",
     "xradarsat2",
     "xarray-safe-rcm",
     "xsarsea",
+    "xmlschema>=3.4.3,<4",
 ]
 
 [project.optional-dependencies]
@@ -34,3 +36,46 @@ fallback_version = "999"
 [build-system]
 requires = ["setuptools>=64.0", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["linux-64", "win-64", "osx-arm64"]
+
+[tool.pixi.dependencies]
+python = ">=3.10"
+numpy = ">=2.5.5,<3"
+pyyaml = ">=6.0.3,<7"
+tqdm = ">=4.70.1,<5"
+shapely = ">=2.2.0,<3"
+xarray = "*"
+xsar = ">=2026.11.19,<2027"
+xarray-safe-s1 = ">=2026.11.18,<2027"
+xradarsat2 = ">=2026.11.18,<2027"
+xarray-safe-rcm = ">=2026.1.0,<2027"
+xsarsea = ">=2.1.2,<3"
+xmlschema = ">=3.4.3,<4"
+
+[tool.pixi.pypi-dependencies]
+grdtiler = { path = ".", editable = true }
+
+[tool.pixi.feature.test.dependencies]
+pytest = ">=9.2.0,<10"
+pytest-cov = ">=7.1.0,<8"
+
+[tool.pixi.feature.test.tasks]
+test = "pytest tests/ -v"
+cov = "pytest --cov=grdtiler"
+
+[tool.pixi.feature.notebook.dependencies]
+ipykernel = "*"
+
+[tool.pixi.feature.build.dependencies]
+rattler-build = ">=0.81"
+
+[tool.pixi.feature.build.tasks]
+build = "rattler-build build --recipe recipe/ --output-dir output/"
+
+[tool.pixi.environments]
+default = { features = ["test"], solve-group = "default" }
+notebook = { features = ["test", "notebook"], solve-group = "default" }
+build = { features = ["build"], no-default-feature = true }
